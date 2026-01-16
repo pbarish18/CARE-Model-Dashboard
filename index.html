@@ -34,6 +34,12 @@
                 data = XLSX.utils.sheet_to_json(ws);
                 console.log('Data loaded:', data.length, 'rows');
                 console.log('Sample row:', data[0]);
+                console.log('Column names:', Object.keys(data[0]));
+                
+                // Check for C.A.R.E. Model Ratio column
+                const sampleRatio = data[0]['C.A.R.E. Model Ratio'];
+                console.log('Sample C.A.R.E. ratio:', sampleRatio, typeof sampleRatio);
+                
                 render();
             })
             .catch(err => {
@@ -60,12 +66,23 @@
         
         function calcRolling(yrs) {
             const res = {};
+            let processedCount = 0;
+            let skippedCount = 0;
+            
             data.forEach(r => {
                 const inst = r.Institution;
                 const yr = r.FY;
                 const ratio = r['C.A.R.E. Model Ratio'];
                 
-                if (!inst || !yr || ratio == null || isNaN(ratio)) return;
+                if (!inst || !yr) {
+                    skippedCount++;
+                    return;
+                }
+                
+                if (ratio == null || isNaN(ratio) || ratio === 0) {
+                    skippedCount++;
+                    return;
+                }
                 
                 if (!res[inst]) res[inst] = {};
                 
@@ -73,15 +90,23 @@
                 for (let i = 0; i < yrs; i++) {
                     const targetYear = yr - i;
                     const d = data.find(x => x.Institution === inst && x.FY === targetYear);
-                    if (d && d['C.A.R.E. Model Ratio'] != null && !isNaN(d['C.A.R.E. Model Ratio'])) {
+                    if (d && d['C.A.R.E. Model Ratio'] != null && !isNaN(d['C.A.R.E. Model Ratio']) && d['C.A.R.E. Model Ratio'] !== 0) {
                         vals.push(d['C.A.R.E. Model Ratio']);
                     }
                 }
                 
                 if (vals.length === yrs) {
                     res[inst][yr] = vals.reduce((a, b) => a + b, 0) / vals.length;
+                    processedCount++;
                 }
             });
+            
+            console.log('Rolling calc:', processedCount, 'values calculated,', skippedCount, 'skipped');
+            console.log('Sample rolling averages:', Object.keys(res).slice(0, 3).map(inst => ({
+                institution: inst,
+                years: Object.keys(res[inst]).length
+            })));
+            
             return res;
         }
         
