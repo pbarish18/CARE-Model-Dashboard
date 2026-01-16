@@ -17,17 +17,12 @@
         const NAVY = '#001f3f';
         const ORANGE = '#f76900';
         
-        // State
         let state = {
             school: 'ALL',
             year: 'ALL',
             conf: 'ALL',
             subdiv: 'ALL',
-            rolling: 1,
-            compare: false,
-            cType: 'institution',
-            c1: '',
-            c2: ''
+            rolling: 1
         };
         
         // Load data
@@ -37,15 +32,18 @@
                 const wb = XLSX.read(buf, { type: 'array' });
                 const ws = wb.Sheets[wb.SheetNames[0]];
                 data = XLSX.utils.sheet_to_json(ws);
+                console.log('Data loaded:', data.length, 'rows');
+                console.log('Sample row:', data[0]);
                 render();
             })
             .catch(err => {
+                console.error('Load error:', err);
                 document.getElementById('root').innerHTML = `
                     <div class="flex items-center justify-center h-screen">
-                        <div class="text-center p-6 bg-red-50 rounded-lg">
+                        <div class="text-center p-6 bg-red-50 rounded-lg max-w-lg">
                             <div class="text-2xl font-bold text-red-600 mb-2">Error Loading Data</div>
-                            <div>${err.message}</div>
-                            <div class="text-sm mt-2">Make sure CAREModel20052024_011625.xlsx is in your repository</div>
+                            <div class="mb-2">${err.message}</div>
+                            <div class="text-sm">Make sure CAREModel20052024_011625.xlsx is in your repository root</div>
                         </div>
                     </div>
                 `;
@@ -54,7 +52,7 @@
         function getFiltered() {
             return data.filter(r => 
                 (state.school === 'ALL' || r.Institution === state.school) &&
-                (state.year === 'ALL' || r.FY?.toString() === state.year) &&
+                (state.year === 'ALL' || String(r.FY) === String(state.year)) &&
                 (state.conf === 'ALL' || r.Conference === state.conf) &&
                 (state.subdiv === 'ALL' || r['Division I Subdivision'] === state.subdiv)
             );
@@ -63,15 +61,26 @@
         function calcRolling(yrs) {
             const res = {};
             data.forEach(r => {
-                const inst = r.Institution, yr = r.FY, ratio = r['C.A.R.E. Model Ratio'];
-                if (!inst || !yr || ratio == null) return;
+                const inst = r.Institution;
+                const yr = r.FY;
+                const ratio = r['C.A.R.E. Model Ratio'];
+                
+                if (!inst || !yr || ratio == null || isNaN(ratio)) return;
+                
                 if (!res[inst]) res[inst] = {};
+                
                 const vals = [];
                 for (let i = 0; i < yrs; i++) {
-                    const d = data.find(x => x.Institution === inst && x.FY === yr - i);
-                    if (d?.['C.A.R.E. Model Ratio'] != null) vals.push(d['C.A.R.E. Model Ratio']);
+                    const targetYear = yr - i;
+                    const d = data.find(x => x.Institution === inst && x.FY === targetYear);
+                    if (d && d['C.A.R.E. Model Ratio'] != null && !isNaN(d['C.A.R.E. Model Ratio'])) {
+                        vals.push(d['C.A.R.E. Model Ratio']);
+                    }
                 }
-                if (vals.length === yrs) res[inst][yr] = vals.reduce((a, b) => a + b) / vals.length;
+                
+                if (vals.length === yrs) {
+                    res[inst][yr] = vals.reduce((a, b) => a + b, 0) / vals.length;
+                }
             });
             return res;
         }
@@ -79,42 +88,87 @@
         function getTrend() {
             const rollAvgs = calcRolling(state.rolling);
             const yd = {};
+            
             Object.keys(rollAvgs).forEach(inst => {
                 Object.keys(rollAvgs[inst]).forEach(yr => {
-                    const or = data.find(r => r.Institution === inst && r.FY === parseInt(yr));
+                    const yearNum = parseInt(yr);
+                    const or = data.find(r => r.Institution === inst && r.FY === yearNum);
+                    
                     if (state.school !== 'ALL' && inst !== state.school) return;
                     if (state.conf !== 'ALL' && or?.Conference !== state.conf) return;
                     if (state.subdiv !== 'ALL' && or?.['Division I Subdivision'] !== state.subdiv) return;
-                    if (!yd[yr]) yd[yr] = { sum: 0, count: 0, year: parseInt(yr) };
-                    yd[yr].sum += rollAvgs[inst][yr];
-                    yd[yr].count++;
+                    
+                    if (!yd[yearNum]) {
+                        yd[yearNum] = { sum: 0, count: 0, year: yearNum };
+                    }
+                    yd[yearNum].sum += rollAvgs[inst][yr];
+                    yd[yearNum].count++;
                 });
             });
-            return Object.values(yd).map(i => ({ year: i.year, avgRatio: i.sum / i.count })).sort((a, b) => a.year - b.year);
+            
+            const result = Object.values(yd)
+                .map(i => ({
+                    year: i.year,
+                    avgRatio: i.sum / i.count
+                }))
+                .sort((a, b) => a.year - b.year);
+            
+            console.log('Trend data:', result);
+            return result;
         }
         
         function getTop() {
             const rollAvgs = calcRolling(state.rolling);
             const sa = {};
+            
             Object.keys(rollAvgs).forEach(inst => {
                 const rats = Object.values(rollAvgs[inst]);
                 const ors = data.filter(r => r.Institution === inst);
+                
                 if (state.conf !== 'ALL' && !ors.some(r => r.Conference === state.conf)) return;
                 if (state.subdiv !== 'ALL' && !ors.some(r => r['Division I Subdivision'] === state.subdiv)) return;
-                if (rats.length) sa[inst] = { school: inst, avgRatio: rats.reduce((a, b) => a + b) / rats.length };
+                
+                if (rats.length > 0) {
+                    sa[inst] = {
+                        school: inst,
+                        avgRatio: rats.reduce((a, b) => a + b, 0) / rats.length
+                    };
+                }
             });
-            return Object.values(sa).sort((a, b) => b.avgRatio - a.avgRatio).slice(0, 15);
+            
+            const result = Object.values(sa)
+                .sort((a, b) => b.avgRatio - a.avgRatio)
+                .slice(0, 15);
+            
+            console.log('Top schools:', result);
+            return result;
         }
         
         function destroyCharts() {
-            Object.values(charts).forEach(c => c?.destroy());
+            Object.values(charts).forEach(c => {
+                if (c && typeof c.destroy === 'function') {
+                    c.destroy();
+                }
+            });
             charts = {};
         }
         
         function createTrendChart() {
             const trend = getTrend();
             const ctx = document.getElementById('trendChart');
-            if (!ctx) return;
+            
+            if (!ctx) {
+                console.error('Trend chart canvas not found');
+                return;
+            }
+            
+            if (trend.length === 0) {
+                console.warn('No trend data available');
+                ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">No data available for selected filters and rolling average period</p>';
+                return;
+            }
+            
+            console.log('Creating trend chart with', trend.length, 'points');
             
             charts.trend = new Chart(ctx, {
                 type: 'line',
@@ -125,13 +179,34 @@
                         data: trend.map(t => t.avgRatio),
                         borderColor: NAVY,
                         backgroundColor: NAVY + '20',
-                        tension: 0.1
+                        borderWidth: 2,
+                        tension: 0.1,
+                        pointRadius: 3
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { display: true } }
+                    plugins: {
+                        legend: {
+                            display: true
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            title: {
+                                display: true,
+                                text: 'C.A.R.E. Ratio'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Year'
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -139,7 +214,19 @@
         function createTopChart() {
             const top = getTop();
             const ctx = document.getElementById('topChart');
-            if (!ctx) return;
+            
+            if (!ctx) {
+                console.error('Top chart canvas not found');
+                return;
+            }
+            
+            if (top.length === 0) {
+                console.warn('No top schools data available');
+                ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">No data available for selected filters</p>';
+                return;
+            }
+            
+            console.log('Creating top chart with', top.length, 'schools');
             
             charts.top = new Chart(ctx, {
                 type: 'bar',
@@ -155,7 +242,20 @@
                     indexAxis: 'y',
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { display: false } }
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: false,
+                            title: {
+                                display: true,
+                                text: 'Average C.A.R.E. Ratio'
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -164,10 +264,13 @@
             const schools = [...new Set(data.map(r => r.Institution).filter(Boolean))].sort();
             const confs = [...new Set(data.map(r => r.Conference).filter(Boolean))].sort();
             const subdivs = [...new Set(data.map(r => r['Division I Subdivision']).filter(Boolean))].sort();
-            const years = [...new Set(data.map(r => r.FY).filter(Boolean))].sort();
+            const years = [...new Set(data.map(r => r.FY).filter(Boolean))].sort((a, b) => a - b);
             const filtered = getFiltered();
             const trend = getTrend();
             const rlbl = state.rolling === 1 ? '1-Year' : state.rolling === 20 ? 'Full Period' : `${state.rolling}-Year Rolling`;
+            
+            console.log('Rendering with state:', state);
+            console.log('Filtered rows:', filtered.length);
             
             document.getElementById('root').innerHTML = `
                 <div class="max-w-7xl mx-auto">
@@ -214,7 +317,7 @@
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-2">Year</label>
+                                <label class="block text-sm font-medium mb-2">Year (for table only)</label>
                                 <select id="year" class="w-full p-2 border rounded-md">
                                     <option value="ALL">All Years</option>
                                     ${years.map(y => `<option value="${y}">${y}</option>`).join('')}
@@ -234,24 +337,24 @@
                         </div>
                         <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${NAVY}">
                             <h3 class="text-sm font-medium text-gray-600">Years</h3>
-                            <p class="text-2xl font-bold" style="color: ${NAVY}">${state.year === 'ALL' ? `${Math.min(...years)}-${Math.max(...years)}` : state.year}</p>
+                            <p class="text-2xl font-bold" style="color: ${NAVY}">${years.length > 0 ? `${Math.min(...years)}-${Math.max(...years)}` : 'N/A'}</p>
                         </div>
                         <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${ORANGE}">
                             <h3 class="text-sm font-medium text-gray-600">Avg Ratio</h3>
-                            <p class="text-2xl font-bold" style="color: ${ORANGE}">${trend.length ? (trend.reduce((s, r) => s + r.avgRatio, 0) / trend.length).toFixed(2) : '0.00'}</p>
+                            <p class="text-2xl font-bold" style="color: ${ORANGE}">${trend.length ? (trend.reduce((s, r) => s + r.avgRatio, 0) / trend.length).toFixed(2) : 'N/A'}</p>
                         </div>
                     </div>
                     
                     <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
                         <h2 class="text-xl font-semibold mb-4">Trend (${rlbl})</h2>
-                        <div style="height: 300px;">
+                        <div style="height: 300px;" id="trendContainer">
                             <canvas id="trendChart"></canvas>
                         </div>
                     </div>
                     
                     <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
-                        <h2 class="text-xl font-semibold mb-4">Top 15 (${rlbl})</h2>
-                        <div style="height: 400px;">
+                        <h2 class="text-xl font-semibold mb-4">Top 15 Schools (${rlbl})</h2>
+                        <div style="height: 400px;" id="topContainer">
                             <canvas id="topChart"></canvas>
                         </div>
                     </div>
@@ -272,36 +375,61 @@
                                 <tbody class="divide-y">
                                     ${filtered.slice(0, 50).map(r => `
                                         <tr class="hover:bg-gray-50">
-                                            <td class="px-4 py-3 text-sm">${r.FY}</td>
-                                            <td class="px-4 py-3 text-sm">${r.Institution}</td>
-                                            <td class="px-4 py-3 text-sm">${r.Conference}</td>
-                                            <td class="px-4 py-3 text-sm">${r['Division I Subdivision']}</td>
-                                            <td class="px-4 py-3 text-sm text-right">${r['C.A.R.E. Model Ratio']?.toFixed(2)}</td>
+                                            <td class="px-4 py-3 text-sm">${r.FY || 'N/A'}</td>
+                                            <td class="px-4 py-3 text-sm">${r.Institution || 'N/A'}</td>
+                                            <td class="px-4 py-3 text-sm">${r.Conference || 'N/A'}</td>
+                                            <td class="px-4 py-3 text-sm">${r['Division I Subdivision'] || 'N/A'}</td>
+                                            <td class="px-4 py-3 text-sm text-right">${r['C.A.R.E. Model Ratio'] != null ? r['C.A.R.E. Model Ratio'].toFixed(2) : 'N/A'}</td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
                             </table>
-                            ${filtered.length > 50 ? `<p class="text-sm text-gray-500 mt-4">Showing 50 of ${filtered.length}</p>` : ''}
+                            ${filtered.length > 50 ? `<p class="text-sm text-gray-500 mt-4">Showing 50 of ${filtered.length} records</p>` : ''}
+                            ${filtered.length === 0 ? `<p class="text-center text-gray-500 py-4">No data matches selected filters</p>` : ''}
                         </div>
                     </div>
                 </div>
             `;
             
-            // Set values
+            // Set select values
             document.getElementById('rolling').value = state.rolling;
             document.getElementById('school').value = state.school;
             document.getElementById('conf').value = state.conf;
             document.getElementById('subdiv').value = state.subdiv;
             document.getElementById('year').value = state.year;
             
-            // Add listeners
-            document.getElementById('rolling').onchange = (e) => { state.rolling = parseInt(e.target.value); destroyCharts(); render(); };
-            document.getElementById('school').onchange = (e) => { state.school = e.target.value; destroyCharts(); render(); };
-            document.getElementById('conf').onchange = (e) => { state.conf = e.target.value; destroyCharts(); render(); };
-            document.getElementById('subdiv').onchange = (e) => { state.subdiv = e.target.value; destroyCharts(); render(); };
-            document.getElementById('year').onchange = (e) => { state.year = e.target.value; destroyCharts(); render(); };
+            // Add event listeners
+            document.getElementById('rolling').onchange = (e) => {
+                state.rolling = parseInt(e.target.value);
+                console.log('Rolling changed to:', state.rolling);
+                destroyCharts();
+                render();
+            };
+            document.getElementById('school').onchange = (e) => {
+                state.school = e.target.value;
+                console.log('School changed to:', state.school);
+                destroyCharts();
+                render();
+            };
+            document.getElementById('conf').onchange = (e) => {
+                state.conf = e.target.value;
+                console.log('Conference changed to:', state.conf);
+                destroyCharts();
+                render();
+            };
+            document.getElementById('subdiv').onchange = (e) => {
+                state.subdiv = e.target.value;
+                console.log('Subdivision changed to:', state.subdiv);
+                destroyCharts();
+                render();
+            };
+            document.getElementById('year').onchange = (e) => {
+                state.year = e.target.value;
+                console.log('Year changed to:', state.year);
+                render();
+            };
             
-            // Create charts
+            // Create charts after DOM is ready
             destroyCharts();
             setTimeout(() => {
                 createTrendChart();
