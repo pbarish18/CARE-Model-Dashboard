@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C.A.R.E. Model Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.10.3/Recharts.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = Recharts;
+
+const Dashboard = () => {
+  const [data, setData] = useState([]);
+  const [school, setSchool] = useState('ALL');
+  const [year, setYear] = useState('ALL');
+  const [conf, setConf] = useState('ALL');
+  const [subdiv, setSubdiv] = useState('ALL');
+  const [rolling, setRolling] = useState(1);
+  const [compare, setCompare] = useState(false);
+  const [cType, setCType] = useState('institution');
+  const [c1, setC1] = useState('');
+  const [c2, setC2] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const NAVY = '#001f3f';
+  const ORANGE = '#f76900';
+
+  useEffect(() => {
+    fetch('CAREModel20052024_011625.xlsx')
+      .then(r => r.arrayBuffer())
+      .then(buf => {
+        const wb = XLSX.read(buf, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        setData(XLSX.utils.sheet_to_json(ws));
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const schools = useMemo(() => [...new Set(data.map(r => r.Institution).filter(Boolean))].sort(), [data]);
+  const confs = useMemo(() => [...new Set(data.map(r => r.Conference).filter(Boolean))].sort(), [data]);
+  const subdivs = useMemo(() => [...new Set(data.map(r => r['Division I Subdivision']).filter(Boolean))].sort(), [data]);
+  const years = useMemo(() => [...new Set(data.map(r => r.FY).filter(Boolean))].sort(), [data]);
+
+  const filtered = useMemo(() => data.filter(r => 
+    (school === 'ALL' || r.Institution === school) &&
+    (year === 'ALL' || r.FY?.toString() === year) &&
+    (conf === 'ALL' || r.Conference === conf) &&
+    (subdiv === 'ALL' || r['Division I Subdivision'] === subdiv)
+  ), [data, school, year, conf, subdiv]);
+
+  const calcRolling = (dp, yrs) => {
+    const res = {};
+    dp.forEach(r => {
+      const inst = r.Institution, yr = r.FY, ratio = r['C.A.R.E. Model Ratio'];
+      if (!inst || !yr || ratio == null) return;
+      if (!res[inst]) res[inst] = {};
+      const vals = [];
+      for (let i = 0; i < yrs; i++) {
+        const d = dp.find(x => x.Institution === inst && x.FY === yr - i);
+        if (d?.['C.A.R.E. Model Ratio'] != null) vals.push(d['C.A.R.E. Model Ratio']);
+      }
+      if (vals.length === yrs) res[inst][yr] = vals.reduce((a, b) => a + b) / vals.length;
+    });
+    return res;
+  };
+
+  const rollAvgs = useMemo(() => calcRolling(data, rolling), [data, rolling]);
+
+  const trend = useMemo(() => {
+    const yd = {};
+    Object.keys(rollAvgs).forEach(inst => {
+      Object.keys(rollAvgs[inst]).forEach(yr => {
+        const or = data.find(r => r.Institution === inst && r.FY === parseInt(yr));
+        if (school !== 'ALL' && inst !== school) return;
+        if (conf !== 'ALL' && or?.Conference !== conf) return;
+        if (subdiv !== 'ALL' && or?.['Division I Subdivision'] !== subdiv) return;
+        if (!yd[yr]) yd[yr] = { sum: 0, count: 0, year: parseInt(yr) };
+        yd[yr].sum += rollAvgs[inst][yr];
+        yd[yr].count++;
+      });
+    });
+    return Object.values(yd).map(i => ({ year: i.year, avgRatio: i.sum / i.count })).sort((a, b) => a.year - b.year);
+  }, [rollAvgs, data, school, conf, subdiv]);
+
+  const top = useMemo(() => {
+    const sa = {};
+    Object.keys(rollAvgs).forEach(inst => {
+      const rats = Object.values(rollAvgs[inst]);
+      const ors = data.filter(r => r.Institution === inst);
+      if (conf !== 'ALL' && !ors.some(r => r.Conference === conf)) return;
+      if (subdiv !== 'ALL' && !ors.some(r => r['Division I Subdivision'] === subdiv)) return;
+      if (rats.length) sa[inst] = { school: inst, avgRatio: rats.reduce((a, b) => a + b) / rats.length };
+    });
+    return Object.values(sa).sort((a, b) => b.avgRatio - a.avgRatio).slice(0, 15);
+  }, [rollAvgs, data, conf, subdiv]);
+
+  const cData = useMemo(() => {
+    if (!compare || !c1 || !c2) return null;
+    const get = (item, first) => {
+      const yd = {};
+      if (cType === 'institution') {
+        Object.keys(rollAvgs[item] || {}).forEach(yr => yd[yr] = rollAvgs[item][yr]);
+      } else {
+        Object.keys(rollAvgs).forEach(inst => {
+          Object.keys(rollAvgs[inst]).forEach(yr => {
+            const or = data.find(r => r.Institution === inst && r.FY === parseInt(yr));
+            if (or?.Conference === item) {
+              if (!yd[yr]) yd[yr] = { sum: 0, count: 0 };
+              yd[yr].sum += rollAvgs[inst][yr];
+              yd[yr].count++;
+            }
+          });
+        });
+        Object.keys(yd).forEach(yr => yd[yr] = yd[yr].sum / yd[yr].count);
+      }
+      return Object.keys(yd).map(yr => ({ year: parseInt(yr), [first ? 'r1' : 'r2']: yd[yr] }));
+    };
+    const d1 = get(c1, true), d2 = get(c2, false);
+    const m = {};
+    d1.forEach(d => m[d.year] = { year: d.year, r1: d.r1 });
+    d2.forEach(d => m[d.year] ? m[d.year].r2 = d.r2 : m[d.year] = { year: d.year, r2: d.r2 });
+    return Object.values(m).sort((a, b) => a.year - b.year);
+  }, [compare, cType, c1, c2, rollAvgs, data]);
+
+  const cStats = useMemo(() => {
+    if (!cData) return null;
+    const s1 = cData.filter(d => d.r1).map(d => d.r1);
+    const s2 = cData.filter(d => d.r2).map(d => d.r2);
+    const calc = arr => ({ avg: arr.reduce((a, b) => a + b) / arr.length, min: Math.min(...arr), max: Math.max(...arr), latest: arr[arr.length - 1] });
+    return { i1: s1.length ? calc(s1) : null, i2: s2.length ? calc(s2) : null };
+  }, [cData]);
+
+  const rlbl = rolling === 1 ? '1-Year' : rolling === 20 ? 'Full Period' : `${rolling}-Year Rolling`;
+
+  if (loading) return <div className="flex items-center justify-center h-screen"><div className="text-2xl font-bold">Loading...</div></div>;
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-7xl mx-auto">
+        <div className="rounded-lg shadow-lg p-6 mb-6" style={{ backgroundColor: NAVY, color: 'white' }}>
+          <h1 className="text-3xl font-bold mb-2">C.A.R.E. Model Dashboard</h1>
+          <p className="mb-4 opacity-90">Knight Commission - FY 2005-2024</p>
+          <p className="text-sm opacity-80">C.A.R.E. Ratio = (Aid + Meals + Medical) ÷ Shared Revenue</p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4">Filters</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Rolling Average</label>
+              <select value={rolling} onChange={e => setRolling(parseInt(e.target.value))} className="w-full p-2 border rounded-md">
+                <option value={1}>1-Year</option>
+                <option value={3}>3-Year</option>
+                <option value={5}>5-Year</option>
+                <option value={10}>10-Year</option>
+                <option value={20}>Full Period</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">School</label>
+              <select value={school} onChange={e => setSchool(e.target.value)} className="w-full p-2 border rounded-md">
+                <option value="ALL">All Schools</option>
+                {schools.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Conference</label>
+              <select value={conf} onChange={e => setConf(e.target.value)} className="w-full p-2 border rounded-md">
+                <option value="ALL">All</option>
+                {confs.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Subdivision</label>
+              <select value={subdiv} onChange={e => setSubdiv(e.target.value)} className="w-full p-2 border rounded-md">
+                <option value="ALL">All</option>
+                {subdivs.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Year</label>
+              <select value={year} onChange={e => setYear(e.target.value)} className="w-full p-2 border rounded-md">
+                <option value="ALL">All Years</option>
+                {years.map(y => <option key={y} value={y.toString()}>{y}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold">Comparison</h2>
+            <button onClick={() => setCompare(!compare)} className="px-4 py-2 rounded-md text-white font-medium" style={{ backgroundColor: compare ? ORANGE : NAVY }}>
+              {compare ? 'Disable' : 'Enable'}
+            </button>
+          </div>
+          {compare && (
+            <div className="space-y-4">
+              <select value={cType} onChange={e => { setCType(e.target.value); setC1(''); setC2(''); }} className="w-full p-2 border rounded-md">
+                <option value="institution">Institutions</option>
+                <option value="conference">Conferences</option>
+              </select>
+              <div className="grid grid-cols-2 gap-4">
+                <select value={c1} onChange={e => setC1(e.target.value)} className="w-full p-2 border rounded-md">
+                  <option value="">Select 1</option>
+                  {(cType === 'institution' ? schools : confs).map(i => <option key={i} value={i}>{i}</option>)}
+                </select>
+                <select value={c2} onChange={e => setC2(e.target.value)} className="w-full p-2 border rounded-md">
+                  <option value="">Select 2</option>
+                  {(cType === 'institution' ? schools : confs).map(i => <option key={i} value={i}>{i}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {compare && c1 && c2 && cData && (
+          <>
+            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+              <h2 className="text-xl font-semibold mb-4">{c1} vs {c2} ({rlbl})</h2>
+              <ResponsiveContainer width="100%" height={350}>
+                <LineChart data={cData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="year" />
+                  <YAxis />
+                  <Tooltip formatter={v => v?.toFixed(2)} />
+                  <Legend />
+                  <Line type="monotone" dataKey="r1" stroke={NAVY} name={c1} strokeWidth={2} />
+                  <Line type="monotone" dataKey="r2" stroke={ORANGE} name={c2} strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            {cStats && (
+              <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h2 className="text-xl font-semibold mb-4">Stats Comparison</h2>
+                <table className="min-w-full divide-y">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase">Metric</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase">{c1}</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase">{c2}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    <tr><td className="px-4 py-3 text-sm font-medium">Avg</td><td className="px-4 py-3 text-sm text-right">{cStats.i1?.avg.toFixed(2)}</td><td className="px-4 py-3 text-sm text-right">{cStats.i2?.avg.toFixed(2)}</td></tr>
+                    <tr className="bg-gray-50"><td className="px-4 py-3 text-sm font-medium">Min</td><td className="px-4 py-3 text-sm text-right">{cStats.i1?.min.toFixed(2)}</td><td className="px-4 py-3 text-sm text-right">{cStats.i2?.min.toFixed(2)}</td></tr>
+                    <tr><td className="px-4 py-3 text-sm font-medium">Max</td><td className="px-4 py-3 text-sm text-right">{cStats.i1?.max.toFixed(2)}</td><td className="px-4 py-3 text-sm text-right">{cStats.i2?.max.toFixed(2)}</td></tr>
+                    <tr className="bg-gray-50"><td className="px-4 py-3 text-sm font-medium">Latest</td><td className="px-4 py-3 text-sm text-right">{cStats.i1?.latest.toFixed(2)}</td><td className="px-4 py-3 text-sm text-right">{cStats.i2?.latest.toFixed(2)}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+
+        {!compare && (
+          <>
+            <div className="grid grid-cols-4 gap-4 mb-6">
+              <div className="bg-white rounded-lg shadow p-4" style={{ borderTop: `4px solid ${NAVY}` }}><h3 className="text-sm font-medium text-gray-600">Records</h3><p className="text-2xl font-bold" style={{ color: NAVY }}>{filtered.length}</p></div>
+              <div className="bg-white rounded-lg shadow p-4" style={{ borderTop: `4px solid ${ORANGE}` }}><h3 className="text-sm font-medium text-gray-600">Schools</h3><p className="text-2xl font-bold" style={{ color: ORANGE }}>{school === 'ALL' ? schools.length : 1}</p></div>
+              <div className="bg-white rounded-lg shadow p-4" style={{ borderTop: `4px solid ${NAVY}` }}><h3 className="text-sm font-medium text-gray-600">Years</h3><p className="text-2xl font-bold" style={{ color: NAVY }}>{year === 'ALL' ? `${Math.min(...years)}-${Math.max(...years)}` : year}</p></div>
+              <div className="bg-white rounded-lg shadow p-4" style={{ borderTop: `4px solid ${ORANGE}` }}><h3 className="text-sm font-medium text-gray-600">Avg Ratio</h3><p className="text-2xl font-bold" style={{ color: ORANGE }}>{trend.length ? (trend.reduce((s, r) => s + r.avgRatio, 0) / trend.length).toFixed(2) : '0.00'}</p></div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+              <h2 className="text-xl font-semibold mb-4">Trend ({rlbl})</h2>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={trend}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="year" />
+                  <YAxis />
+                  <Tooltip formatter={v => v.toFixed(2)} />
+                  <Legend />
+                  <Line type="monotone" dataKey="avgRatio" stroke={NAVY} name="Avg C.A.R.E. Ratio" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+              <h2 className="text-xl font-semibold mb-4">Top 15 ({rlbl})</h2>
+              <ResponsiveContainer width="100%" height={400}>
+                <BarChart data={top} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" />
+                  <YAxis dataKey="school" type="category" width={150} tick={{ fontSize: 12 }} />
+                  <Tooltip formatter={v => v.toFixed(2)} />
+                  <Bar dataKey="avgRatio" fill={ORANGE} name="Avg Ratio" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <h2 className="text-xl font-semibold mb-4">Data Table</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase">Year</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase">School</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase">Conf</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase">Subdiv</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase">Ratio</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {filtered.slice(0, 50).map((r, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm">{r.FY}</td>
+                        <td className="px-4 py-3 text-sm">{r.Institution}</td>
+                        <td className="px-4 py-3 text-sm">{r.Conference}</td>
+                        <td className="px-4 py-3 text-sm">{r['Division I Subdivision']}</td>
+                        <td className="px-4 py-3 text-sm text-right">{r['C.A.R.E. Model Ratio']?.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {filtered.length > 50 && <p className="text-sm text-gray-500 mt-4">Showing 50 of {filtered.length}</p>}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+ReactDOM.render(<Dashboard />, document.getElementById('root'));
+    </script>
+</body>
+</html>
