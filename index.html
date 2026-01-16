@@ -99,9 +99,15 @@ function getTrend() {
             if (state.conf !== 'ALL' && or?.Conference !== state.conf) return;
             if (state.subdiv !== 'ALL' && or?.['Division I Subdivision'] !== state.subdiv) return;
             
-            // If a specific year is selected, only include that year
-            // (which represents the rolling average ending in that year)
-            if (state.year !== 'ALL' && yearNum !== parseInt(state.year)) return;
+            // If a specific year is selected with rolling average > 1, include all component years
+            if (state.year !== 'ALL' && state.rolling > 1) {
+                const selectedYear = parseInt(state.year);
+                // Only include years in the rolling window
+                if (yearNum < selectedYear - state.rolling + 1 || yearNum > selectedYear) return;
+            } else if (state.year !== 'ALL' && state.rolling === 1) {
+                // For 1-year with specific year, only that year
+                if (yearNum !== parseInt(state.year)) return;
+            }
             
             if (!yd[yearNum]) {
                 yd[yearNum] = { sum: 0, count: 0, year: yearNum };
@@ -111,30 +117,7 @@ function getTrend() {
         });
     });
     
-    const result = Object.values(yd).map(i => ({ year: i.year, avgRatio: i.sum / i.count })).sort((a, b) => a.year - b.year);
-    
-    // If a specific year is selected with rolling average > 1, show the component years
-    if (state.year !== 'ALL' && state.rolling > 1) {
-        const selectedYear = parseInt(state.year);
-        const avgValue = result.find(r => r.year === selectedYear)?.avgRatio || 0;
-        const componentYears = [];
-        
-        for (let i = state.rolling - 1; i >= 0; i--) {
-            componentYears.push({
-                year: selectedYear - i,
-                avgRatio: avgValue
-            });
-        }
-        
-        return componentYears;
-    }
-    
-    // If specific year with 1-year average, return empty (will hide chart)
-    if (state.year !== 'ALL' && state.rolling === 1) {
-        return [];
-    }
-    
-    return result;
+    return Object.values(yd).map(i => ({ year: i.year, avgRatio: i.sum / i.count })).sort((a, b) => a.year - b.year);
 }
 
 function getTop() {
@@ -222,7 +205,7 @@ function createTrendChart() {
     
     // If specific year with 1-year average, hide chart with message
     if (state.year !== 'ALL' && state.rolling === 1) {
-        if (ctx) ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">Chart hidden for single year selection. See data table below for the specific value.</p>';
+        if (ctx) ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">Chart hidden for single year selection. The CARE Ratio for this year is displayed in the summary box above.</p>';
         return;
     }
     
@@ -230,16 +213,17 @@ function createTrendChart() {
         if (ctx) ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">No data</p>';
         return;
     }
+    
     charts.trend = new Chart(ctx, {
         type: 'line',
         data: {
             labels: trend.map(t => t.year),
-            datasets: [{ label: 'Avg CARE Ratio (%)', data: trend.map(t => t.avgRatio), borderColor: NAVY, backgroundColor: NAVY + '20', borderWidth: 2, tension: 0.1 }]
+            datasets: [{ label: 'CARE Ratio (%)', data: trend.map(t => t.avgRatio), borderColor: NAVY, backgroundColor: NAVY + '20', borderWidth: 2, tension: 0.1, pointRadius: 4 }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            scales: { y: { beginAtZero: false, title: { display: true, text: 'CARE Ratio (%)' }, ticks: { callback: v => v + '%' } }, x: { title: { display: true, text: 'Year' } } }
+            scales: { y: { beginAtZero: false, title: { display: true, text: 'CARE Ratio (%)' }, ticks: { callback: v => v + '%' } }, x: { title: { display: true, text: 'Fiscal Year' } } }
         }
     });
 }
@@ -298,6 +282,30 @@ function render() {
     const rlbl = state.rolling === 1 ? '1-Year' : state.rolling === 20 ? 'Full Period' : `${state.rolling}-Year Rolling`;
     const cData = getCompData();
     const cStats = getCompStats(cData);
+    
+    // Calculate average CARE ratio for display
+    let avgCareRatioValue = 'N/A';
+    let avgCareRatioLabel = 'Avg CARE Ratio';
+    
+    if (state.year !== 'ALL' && state.rolling === 1) {
+        // Single year selected with 1-year average
+        avgCareRatioLabel = `FY ${state.year} CARE Ratio`;
+        const yearData = filtered.filter(r => r.FY === parseInt(state.year));
+        if (yearData.length > 0) {
+            avgCareRatioValue = (yearData.reduce((s, r) => s + (r['CARE Ratio'] || 0), 0) / yearData.length).toFixed(1) + '%';
+        }
+    } else if (state.year !== 'ALL' && state.rolling > 1) {
+        // Specific year with rolling average
+        const selectedYear = parseInt(state.year);
+        const startYear = selectedYear - state.rolling + 1;
+        avgCareRatioLabel = `Avg CARE Ratio FY ${startYear} - FY ${selectedYear}`;
+        if (trend.length > 0) {
+            avgCareRatioValue = (trend.reduce((s, r) => s + r.avgRatio, 0) / trend.length).toFixed(1) + '%';
+        }
+    } else {
+        // All years
+        avgCareRatioValue = trend.length ? (trend.reduce((s, r) => s + r.avgRatio, 0) / trend.length).toFixed(1) + '%' : 'N/A';
+    }
     
     document.getElementById('root').innerHTML = `
         <div class="max-w-7xl mx-auto">
@@ -368,8 +376,8 @@ function render() {
                     <p class="text-2xl font-bold" style="color: ${NAVY}">${years.length > 0 ? Math.min(...years) + '-' + Math.max(...years) : 'N/A'}</p>
                 </div>
                 <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${ORANGE}">
-                    <h3 class="text-sm font-medium text-gray-600">Avg CARE Ratio</h3>
-                    <p class="text-2xl font-bold" style="color: ${ORANGE}">${trend.length ? (trend.reduce((s, r) => s + r.avgRatio, 0) / trend.length).toFixed(1) + '%' : 'N/A'}</p>
+                    <h3 class="text-sm font-medium text-gray-600">${avgCareRatioLabel}</h3>
+                    <p class="text-2xl font-bold" style="color: ${ORANGE}">${avgCareRatioValue}</p>
                 </div>
             </div>
             
