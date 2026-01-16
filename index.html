@@ -10,474 +10,491 @@
 </head>
 <body class="bg-gray-50">
     <div id="root" class="min-h-screen p-6"></div>
-    
     <script>
-        let data = [];
-        let charts = {};
-        const NAVY = '#001f3f';
-        const ORANGE = '#f76900';
-        
-        let state = {
-            school: 'ALL',
-            year: 'ALL',
-            conf: 'ALL',
-            subdiv: 'ALL',
-            rolling: 1
-        };
-        
-        // Load data
-        fetch('CAREModel20052024_011625.xlsx')
-            .then(r => r.arrayBuffer())
-            .then(buf => {
-                const wb = XLSX.read(buf, { type: 'array' });
-                const ws = wb.Sheets[wb.SheetNames[0]];
-                const rawData = XLSX.utils.sheet_to_json(ws);
-                
-                // Calculate C.A.R.E. Model Ratio for each row
-                data = rawData.map(row => {
-                    const aid = row['Athletic Student Aid'] || 0;
-                    const meals = row['Student-Athlete Meals'] || 0;
-                    const medical = row['Medical Expenses'] || 0;
-                    const sharedRev = row['Shared Athletics Revenue'] || 0;
-                    
-                    // Calculate ratio only if shared revenue is positive
-                    const careRatio = sharedRev > 0 ? (aid + meals + medical) / sharedRev : null;
-                    
-                    return {
-                        ...row,
-                        'C.A.R.E. Model Ratio': careRatio
-                    };
-                });
-                
-                console.log('Data loaded:', data.length, 'rows');
-                console.log('Sample row with calculated ratio:', data[0]);
-                console.log('Sample C.A.R.E. ratio:', data[0]['C.A.R.E. Model Ratio']);
-                console.log('Sample calculation: (Aid:', data[0]['Athletic Student Aid'], 
-                    '+ Meals:', data[0]['Student-Athlete Meals'],
-                    '+ Medical:', data[0]['Medical Expenses'], 
-                    ') / Shared Rev:', data[0]['Shared Athletics Revenue']);
-                
-                render();
-            })
-            .catch(err => {
-                console.error('Load error:', err);
-                document.getElementById('root').innerHTML = `
-                    <div class="flex items-center justify-center h-screen">
-                        <div class="text-center p-6 bg-red-50 rounded-lg max-w-lg">
-                            <div class="text-2xl font-bold text-red-600 mb-2">Error Loading Data</div>
-                            <div class="mb-2">${err.message}</div>
-                            <div class="text-sm">Make sure CAREModel20052024_011625.xlsx is in your repository root</div>
-                        </div>
-                    </div>
-                `;
-            });
-        
-        function getFiltered() {
-            return data.filter(r => 
-                (state.school === 'ALL' || r.Institution === state.school) &&
-                (state.year === 'ALL' || String(r.FY) === String(state.year)) &&
-                (state.conf === 'ALL' || r.Conference === state.conf) &&
-                (state.subdiv === 'ALL' || r['Division I Subdivision'] === state.subdiv)
-            );
+let data = [];
+let charts = {};
+const NAVY = '#001f3f';
+const ORANGE = '#f76900';
+
+let state = {
+    school: 'ALL',
+    year: 'ALL',
+    conf: 'ALL',
+    subdiv: 'ALL',
+    rolling: 1,
+    compare: false,
+    cType: 'institution',
+    c1: '',
+    c2: ''
+};
+
+fetch('CAREModel20052024_011625.xlsx')
+    .then(r => r.arrayBuffer())
+    .then(buf => {
+        const wb = XLSX.read(buf, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        data = XLSX.utils.sheet_to_json(ws);
+        console.log('Data loaded:', data.length, 'rows');
+        render();
+    })
+    .catch(err => {
+        document.getElementById('root').innerHTML = `
+            <div class="flex items-center justify-center h-screen">
+                <div class="text-center p-6 bg-red-50 rounded-lg">
+                    <div class="text-2xl font-bold text-red-600 mb-2">Error</div>
+                    <div>${err.message}</div>
+                </div>
+            </div>`;
+    });
+
+function getFiltered() {
+    return data.filter(r => 
+        (state.school === 'ALL' || r.Institution === state.school) &&
+        (state.year === 'ALL' || String(r.FY) === String(state.year)) &&
+        (state.conf === 'ALL' || r.Conference === state.conf) &&
+        (state.subdiv === 'ALL' || r['Division I Subdivision'] === state.subdiv)
+    );
+}
+
+function calcRolling(yrs) {
+    const res = {};
+    data.forEach(r => {
+        const inst = r.Institution;
+        const yr = r.FY;
+        const ratio = r['CARE Ratio'];
+        if (!inst || !yr || ratio == null || isNaN(ratio)) return;
+        if (!res[inst]) res[inst] = {};
+        const vals = [];
+        for (let i = 0; i < yrs; i++) {
+            const d = data.find(x => x.Institution === inst && x.FY === yr - i);
+            if (d && d['CARE Ratio'] != null && !isNaN(d['CARE Ratio'])) {
+                vals.push(d['CARE Ratio']);
+            }
         }
-        
-        function calcRolling(yrs) {
-            const res = {};
-            let processedCount = 0;
-            let skippedCount = 0;
-            
-            data.forEach(r => {
-                const inst = r.Institution;
-                const yr = r.FY;
-                const ratio = r['C.A.R.E. Model Ratio'];
-                
-                if (!inst || !yr) {
-                    skippedCount++;
-                    return;
-                }
-                
-                if (ratio == null || isNaN(ratio) || ratio === 0) {
-                    skippedCount++;
-                    return;
-                }
-                
-                if (!res[inst]) res[inst] = {};
-                
-                const vals = [];
-                for (let i = 0; i < yrs; i++) {
-                    const targetYear = yr - i;
-                    const d = data.find(x => x.Institution === inst && x.FY === targetYear);
-                    if (d && d['C.A.R.E. Model Ratio'] != null && !isNaN(d['C.A.R.E. Model Ratio']) && d['C.A.R.E. Model Ratio'] !== 0) {
-                        vals.push(d['C.A.R.E. Model Ratio']);
-                    }
-                }
-                
-                if (vals.length === yrs) {
-                    res[inst][yr] = vals.reduce((a, b) => a + b, 0) / vals.length;
-                    processedCount++;
-                }
-            });
-            
-            console.log('Rolling calc:', processedCount, 'values calculated,', skippedCount, 'skipped');
-            console.log('Sample rolling averages:', Object.keys(res).slice(0, 3).map(inst => ({
-                institution: inst,
-                years: Object.keys(res[inst]).length
-            })));
-            
-            return res;
+        if (vals.length === yrs) {
+            res[inst][yr] = vals.reduce((a, b) => a + b, 0) / vals.length;
         }
-        
-        function getTrend() {
-            const rollAvgs = calcRolling(state.rolling);
-            const yd = {};
-            
+    });
+    return res;
+}
+
+function getTrend() {
+    const rollAvgs = calcRolling(state.rolling);
+    const yd = {};
+    Object.keys(rollAvgs).forEach(inst => {
+        Object.keys(rollAvgs[inst]).forEach(yr => {
+            const yearNum = parseInt(yr);
+            const or = data.find(r => r.Institution === inst && r.FY === yearNum);
+            if (state.school !== 'ALL' && inst !== state.school) return;
+            if (state.conf !== 'ALL' && or?.Conference !== state.conf) return;
+            if (state.subdiv !== 'ALL' && or?.['Division I Subdivision'] !== state.subdiv) return;
+            if (!yd[yearNum]) yd[yearNum] = { sum: 0, count: 0, year: yearNum };
+            yd[yearNum].sum += rollAvgs[inst][yr];
+            yd[yearNum].count++;
+        });
+    });
+    return Object.values(yd).map(i => ({ year: i.year, avgRatio: i.sum / i.count })).sort((a, b) => a.year - b.year);
+}
+
+function getTop() {
+    const rollAvgs = calcRolling(state.rolling);
+    const sa = {};
+    Object.keys(rollAvgs).forEach(inst => {
+        const rats = Object.values(rollAvgs[inst]);
+        const ors = data.filter(r => r.Institution === inst);
+        if (state.conf !== 'ALL' && !ors.some(r => r.Conference === state.conf)) return;
+        if (state.subdiv !== 'ALL' && !ors.some(r => r['Division I Subdivision'] === state.subdiv)) return;
+        if (rats.length > 0) {
+            sa[inst] = { school: inst, avgRatio: rats.reduce((a, b) => a + b, 0) / rats.length };
+        }
+    });
+    return Object.values(sa).sort((a, b) => b.avgRatio - a.avgRatio).slice(0, 15);
+}
+
+function getCompData() {
+    if (!state.compare || !state.c1 || !state.c2) return null;
+    const rollAvgs = calcRolling(state.rolling);
+    const getData = (item, key) => {
+        const yd = {};
+        if (state.cType === 'institution') {
+            Object.keys(rollAvgs[item] || {}).forEach(yr => yd[yr] = rollAvgs[item][yr]);
+        } else {
             Object.keys(rollAvgs).forEach(inst => {
                 Object.keys(rollAvgs[inst]).forEach(yr => {
-                    const yearNum = parseInt(yr);
-                    const or = data.find(r => r.Institution === inst && r.FY === yearNum);
-                    
-                    if (state.school !== 'ALL' && inst !== state.school) return;
-                    if (state.conf !== 'ALL' && or?.Conference !== state.conf) return;
-                    if (state.subdiv !== 'ALL' && or?.['Division I Subdivision'] !== state.subdiv) return;
-                    
-                    if (!yd[yearNum]) {
-                        yd[yearNum] = { sum: 0, count: 0, year: yearNum };
+                    const or = data.find(r => r.Institution === inst && r.FY === parseInt(yr));
+                    if (or?.Conference === item) {
+                        if (!yd[yr]) yd[yr] = { sum: 0, count: 0 };
+                        yd[yr].sum += rollAvgs[inst][yr];
+                        yd[yr].count++;
                     }
-                    yd[yearNum].sum += rollAvgs[inst][yr];
-                    yd[yearNum].count++;
                 });
             });
-            
-            const result = Object.values(yd)
-                .map(i => ({
-                    year: i.year,
-                    avgRatio: i.sum / i.count
-                }))
-                .sort((a, b) => a.year - b.year);
-            
-            console.log('Trend data:', result);
-            return result;
+            Object.keys(yd).forEach(yr => yd[yr] = yd[yr].sum / yd[yr].count);
         }
-        
-        function getTop() {
-            const rollAvgs = calcRolling(state.rolling);
-            const sa = {};
-            
-            Object.keys(rollAvgs).forEach(inst => {
-                const rats = Object.values(rollAvgs[inst]);
-                const ors = data.filter(r => r.Institution === inst);
-                
-                if (state.conf !== 'ALL' && !ors.some(r => r.Conference === state.conf)) return;
-                if (state.subdiv !== 'ALL' && !ors.some(r => r['Division I Subdivision'] === state.subdiv)) return;
-                
-                if (rats.length > 0) {
-                    sa[inst] = {
-                        school: inst,
-                        avgRatio: rats.reduce((a, b) => a + b, 0) / rats.length
-                    };
-                }
-            });
-            
-            const result = Object.values(sa)
-                .sort((a, b) => b.avgRatio - a.avgRatio)
-                .slice(0, 15);
-            
-            console.log('Top schools:', result);
-            return result;
+        return Object.keys(yd).map(yr => ({ year: parseInt(yr), [key]: yd[yr] }));
+    };
+    const d1 = getData(state.c1, 'r1'), d2 = getData(state.c2, 'r2');
+    const m = {};
+    d1.forEach(d => m[d.year] = { year: d.year, r1: d.r1 });
+    d2.forEach(d => m[d.year] ? m[d.year].r2 = d.r2 : m[d.year] = { year: d.year, r2: d.r2 });
+    return Object.values(m).sort((a, b) => a.year - b.year);
+}
+
+function getCompStats(cData) {
+    if (!cData) return null;
+    const s1 = cData.filter(d => d.r1).map(d => d.r1);
+    const s2 = cData.filter(d => d.r2).map(d => d.r2);
+    const calc = arr => ({ avg: arr.reduce((a, b) => a + b) / arr.length, min: Math.min(...arr), max: Math.max(...arr), latest: arr[arr.length - 1] });
+    return { i1: s1.length ? calc(s1) : null, i2: s2.length ? calc(s2) : null };
+}
+
+function getSummary() {
+    const filtered = getFiltered();
+    if (filtered.length === 0) return null;
+    const sum = { aid: 0, meals: 0, medical: 0, sharedRev: 0, careRatio: 0 };
+    filtered.forEach(r => {
+        sum.aid += r['Athletic Student Aid'] || 0;
+        sum.meals += r['Student-Athlete Meals'] || 0;
+        sum.medical += r['Medical Expenses'] || 0;
+        sum.sharedRev += r['Shared Athletics Revenue'] || 0;
+        sum.careRatio += r['CARE Ratio'] || 0;
+    });
+    const n = filtered.length;
+    return { avgAid: sum.aid / n, avgMeals: sum.meals / n, avgMedical: sum.medical / n, avgSharedRev: sum.sharedRev / n, avgCareRatio: sum.careRatio / n, totalAid: sum.aid, totalMeals: sum.meals, totalMedical: sum.medical, totalSharedRev: sum.sharedRev };
+}
+
+function fmt(num) {
+    if (num >= 1e9) return '$' + (num / 1e9).toFixed(2) + 'B';
+    if (num >= 1e6) return '$' + (num / 1e6).toFixed(2) + 'M';
+    if (num >= 1e3) return '$' + (num / 1e3).toFixed(2) + 'K';
+    return '$' + num.toFixed(2);
+}
+
+function destroyCharts() {
+    Object.values(charts).forEach(c => c?.destroy?.());
+    charts = {};
+}
+
+function createTrendChart() {
+    const trend = getTrend();
+    const ctx = document.getElementById('trendChart');
+    if (!ctx || trend.length === 0) {
+        if (ctx) ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">No data</p>';
+        return;
+    }
+    charts.trend = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: trend.map(t => t.year),
+            datasets: [{ label: 'Avg CARE Ratio (%)', data: trend.map(t => t.avgRatio), borderColor: NAVY, backgroundColor: NAVY + '20', borderWidth: 2, tension: 0.1 }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: false, title: { display: true, text: 'CARE Ratio (%)' }, ticks: { callback: v => v + '%' } }, x: { title: { display: true, text: 'Year' } } }
         }
-        
-        function destroyCharts() {
-            Object.values(charts).forEach(c => {
-                if (c && typeof c.destroy === 'function') {
-                    c.destroy();
-                }
-            });
-            charts = {};
+    });
+}
+
+function createTopChart() {
+    const top = getTop();
+    const ctx = document.getElementById('topChart');
+    if (!ctx || top.length === 0) {
+        if (ctx) ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">No data</p>';
+        return;
+    }
+    charts.top = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: top.map(t => t.school),
+            datasets: [{ label: 'Avg Ratio (%)', data: top.map(t => t.avgRatio), backgroundColor: ORANGE }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: false, title: { display: true, text: 'CARE Ratio (%)' }, ticks: { callback: v => v + '%' } } }
         }
-        
-        function createTrendChart() {
-            const trend = getTrend();
-            const ctx = document.getElementById('trendChart');
-            
-            if (!ctx) {
-                console.error('Trend chart canvas not found');
-                return;
-            }
-            
-            if (trend.length === 0) {
-                console.warn('No trend data available');
-                ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">No data available for selected filters and rolling average period</p>';
-                return;
-            }
-            
-            console.log('Creating trend chart with', trend.length, 'points');
-            
-            charts.trend = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: trend.map(t => t.year),
-                    datasets: [{
-                        label: 'Avg C.A.R.E. Ratio',
-                        data: trend.map(t => t.avgRatio),
-                        borderColor: NAVY,
-                        backgroundColor: NAVY + '20',
-                        borderWidth: 2,
-                        tension: 0.1,
-                        pointRadius: 3
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: true
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: false,
-                            title: {
-                                display: true,
-                                text: 'C.A.R.E. Ratio'
-                            }
-                        },
-                        x: {
-                            title: {
-                                display: true,
-                                text: 'Year'
-                            }
-                        }
-                    }
-                }
-            });
+    });
+}
+
+function createCompChart(cData) {
+    const ctx = document.getElementById('compareChart');
+    if (!ctx || !cData) return;
+    charts.compare = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: cData.map(d => d.year),
+            datasets: [
+                { label: state.c1, data: cData.map(d => d.r1), borderColor: NAVY, backgroundColor: NAVY + '20', borderWidth: 2, tension: 0.1 },
+                { label: state.c2, data: cData.map(d => d.r2), borderColor: ORANGE, backgroundColor: ORANGE + '20', borderWidth: 2, tension: 0.1 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: false, title: { display: true, text: 'CARE Ratio (%)' }, ticks: { callback: v => v + '%' } }, x: { title: { display: true, text: 'Year' } } }
         }
-        
-        function createTopChart() {
-            const top = getTop();
-            const ctx = document.getElementById('topChart');
+    });
+}
+
+function render() {
+    const schools = [...new Set(data.map(r => r.Institution).filter(Boolean))].sort();
+    const confs = [...new Set(data.map(r => r.Conference).filter(Boolean))].sort();
+    const subdivs = [...new Set(data.map(r => r['Division I Subdivision']).filter(Boolean))].sort();
+    const years = [...new Set(data.map(r => r.FY).filter(Boolean))].sort((a, b) => a - b);
+    const filtered = getFiltered();
+    const trend = getTrend();
+    const stats = getSummary();
+    const rlbl = state.rolling === 1 ? '1-Year' : state.rolling === 20 ? 'Full Period' : `${state.rolling}-Year Rolling`;
+    const cData = getCompData();
+    const cStats = getCompStats(cData);
+    
+    document.getElementById('root').innerHTML = `
+        <div class="max-w-7xl mx-auto">
+            <div class="rounded-lg shadow-lg p-6 mb-6" style="background-color: ${NAVY}; color: white;">
+                <h1 class="text-3xl font-bold mb-2">C.A.R.E. Model Dashboard</h1>
+                <p class="mb-4 opacity-90">Knight Commission - FY 2005-2024</p>
+                <p class="text-sm opacity-80">CARE Ratio = (Student Aid + Meals + Medical) ÷ Shared Revenue × 100%</p>
+            </div>
             
-            if (!ctx) {
-                console.error('Top chart canvas not found');
-                return;
-            }
-            
-            if (top.length === 0) {
-                console.warn('No top schools data available');
-                ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">No data available for selected filters</p>';
-                return;
-            }
-            
-            console.log('Creating top chart with', top.length, 'schools');
-            
-            charts.top = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: top.map(t => t.school),
-                    datasets: [{
-                        label: 'Avg Ratio',
-                        data: top.map(t => t.avgRatio),
-                        backgroundColor: ORANGE
-                    }]
-                },
-                options: {
-                    indexAxis: 'y',
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: false
-                        }
-                    },
-                    scales: {
-                        x: {
-                            beginAtZero: false,
-                            title: {
-                                display: true,
-                                text: 'Average C.A.R.E. Ratio'
-                            }
-                        }
-                    }
-                }
-            });
-        }
-        
-        function render() {
-            const schools = [...new Set(data.map(r => r.Institution).filter(Boolean))].sort();
-            const confs = [...new Set(data.map(r => r.Conference).filter(Boolean))].sort();
-            const subdivs = [...new Set(data.map(r => r['Division I Subdivision']).filter(Boolean))].sort();
-            const years = [...new Set(data.map(r => r.FY).filter(Boolean))].sort((a, b) => a - b);
-            const filtered = getFiltered();
-            const trend = getTrend();
-            const rlbl = state.rolling === 1 ? '1-Year' : state.rolling === 20 ? 'Full Period' : `${state.rolling}-Year Rolling`;
-            
-            console.log('Rendering with state:', state);
-            console.log('Filtered rows:', filtered.length);
-            
-            document.getElementById('root').innerHTML = `
-                <div class="max-w-7xl mx-auto">
-                    <div class="rounded-lg shadow-lg p-6 mb-6" style="background-color: ${NAVY}; color: white;">
-                        <h1 class="text-3xl font-bold mb-2">C.A.R.E. Model Dashboard</h1>
-                        <p class="mb-4 opacity-90">Knight Commission - FY 2005-2024</p>
-                        <p class="text-sm opacity-80">C.A.R.E. Ratio = (Aid + Meals + Medical) / Shared Revenue</p>
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h2 class="text-xl font-semibold mb-4">Filters</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-2">Rolling Average</label>
+                        <select id="rolling" class="w-full p-2 border rounded-md">
+                            <option value="1">1-Year</option>
+                            <option value="3">3-Year</option>
+                            <option value="5">5-Year</option>
+                            <option value="10">10-Year</option>
+                            <option value="20">Full Period</option>
+                        </select>
                     </div>
-                    
-                    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
-                        <h2 class="text-xl font-semibold mb-4">Filters</h2>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                            <div>
-                                <label class="block text-sm font-medium mb-2">Rolling Average</label>
-                                <select id="rolling" class="w-full p-2 border rounded-md">
-                                    <option value="1">1-Year</option>
-                                    <option value="3">3-Year</option>
-                                    <option value="5">5-Year</option>
-                                    <option value="10">10-Year</option>
-                                    <option value="20">Full Period</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium mb-2">School</label>
-                                <select id="school" class="w-full p-2 border rounded-md">
-                                    <option value="ALL">All Schools</option>
-                                    ${schools.map(s => `<option value="${s}">${s}</option>`).join('')}
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium mb-2">Conference</label>
-                                <select id="conf" class="w-full p-2 border rounded-md">
-                                    <option value="ALL">All</option>
-                                    ${confs.map(c => `<option value="${c}">${c}</option>`).join('')}
-                                </select>
-                            </div>
-                        </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-medium mb-2">Subdivision</label>
-                                <select id="subdiv" class="w-full p-2 border rounded-md">
-                                    <option value="ALL">All</option>
-                                    ${subdivs.map(s => `<option value="${s}">${s}</option>`).join('')}
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium mb-2">Year (for table only)</label>
-                                <select id="year" class="w-full p-2 border rounded-md">
-                                    <option value="ALL">All Years</option>
-                                    ${years.map(y => `<option value="${y}">${y}</option>`).join('')}
-                                </select>
-                            </div>
-                        </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2">School</label>
+                        <select id="school" class="w-full p-2 border rounded-md">
+                            <option value="ALL">All Schools</option>
+                            ${schools.map(s => `<option value="${s}">${s}</option>`).join('')}
+                        </select>
                     </div>
-                    
-                    <div class="grid grid-cols-4 gap-4 mb-6">
-                        <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${NAVY}">
-                            <h3 class="text-sm font-medium text-gray-600">Records</h3>
-                            <p class="text-2xl font-bold" style="color: ${NAVY}">${filtered.length}</p>
-                        </div>
-                        <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${ORANGE}">
-                            <h3 class="text-sm font-medium text-gray-600">Schools</h3>
-                            <p class="text-2xl font-bold" style="color: ${ORANGE}">${state.school === 'ALL' ? schools.length : 1}</p>
-                        </div>
-                        <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${NAVY}">
-                            <h3 class="text-sm font-medium text-gray-600">Years</h3>
-                            <p class="text-2xl font-bold" style="color: ${NAVY}">${years.length > 0 ? `${Math.min(...years)}-${Math.max(...years)}` : 'N/A'}</p>
-                        </div>
-                        <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${ORANGE}">
-                            <h3 class="text-sm font-medium text-gray-600">Avg Ratio</h3>
-                            <p class="text-2xl font-bold" style="color: ${ORANGE}">${trend.length ? (trend.reduce((s, r) => s + r.avgRatio, 0) / trend.length).toFixed(2) : 'N/A'}</p>
-                        </div>
-                    </div>
-                    
-                    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
-                        <h2 class="text-xl font-semibold mb-4">Trend (${rlbl})</h2>
-                        <div style="height: 300px;" id="trendContainer">
-                            <canvas id="trendChart"></canvas>
-                        </div>
-                    </div>
-                    
-                    <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
-                        <h2 class="text-xl font-semibold mb-4">Top 15 Schools (${rlbl})</h2>
-                        <div style="height: 400px;" id="topContainer">
-                            <canvas id="topChart"></canvas>
-                        </div>
-                    </div>
-                    
-                    <div class="bg-white rounded-lg shadow-lg p-6">
-                        <h2 class="text-xl font-semibold mb-4">Data Table</h2>
-                        <div class="overflow-x-auto">
-                            <table class="min-w-full divide-y">
-                                <thead class="bg-gray-50">
-                                    <tr>
-                                        <th class="px-4 py-3 text-left text-xs font-medium uppercase">Year</th>
-                                        <th class="px-4 py-3 text-left text-xs font-medium uppercase">School</th>
-                                        <th class="px-4 py-3 text-left text-xs font-medium uppercase">Conf</th>
-                                        <th class="px-4 py-3 text-left text-xs font-medium uppercase">Subdiv</th>
-                                        <th class="px-4 py-3 text-right text-xs font-medium uppercase">Ratio</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y">
-                                    ${filtered.slice(0, 50).map(r => `
-                                        <tr class="hover:bg-gray-50">
-                                            <td class="px-4 py-3 text-sm">${r.FY || 'N/A'}</td>
-                                            <td class="px-4 py-3 text-sm">${r.Institution || 'N/A'}</td>
-                                            <td class="px-4 py-3 text-sm">${r.Conference || 'N/A'}</td>
-                                            <td class="px-4 py-3 text-sm">${r['Division I Subdivision'] || 'N/A'}</td>
-                                            <td class="px-4 py-3 text-sm text-right">${r['C.A.R.E. Model Ratio'] != null ? r['C.A.R.E. Model Ratio'].toFixed(2) : 'N/A'}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                            ${filtered.length > 50 ? `<p class="text-sm text-gray-500 mt-4">Showing 50 of ${filtered.length} records</p>` : ''}
-                            ${filtered.length === 0 ? `<p class="text-center text-gray-500 py-4">No data matches selected filters</p>` : ''}
-                        </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2">Conference</label>
+                        <select id="conf" class="w-full p-2 border rounded-md">
+                            <option value="ALL">All</option>
+                            ${confs.map(c => `<option value="${c}">${c}</option>`).join('')}
+                        </select>
                     </div>
                 </div>
-            `;
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-2">Subdivision</label>
+                        <select id="subdiv" class="w-full p-2 border rounded-md">
+                            <option value="ALL">All</option>
+                            ${subdivs.map(s => `<option value="${s}">${s}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2">Year (table only)</label>
+                        <select id="year" class="w-full p-2 border rounded-md">
+                            <option value="ALL">All Years</option>
+                            ${years.map(y => `<option value="${y}">${y}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+            </div>
             
-            // Set select values
-            document.getElementById('rolling').value = state.rolling;
-            document.getElementById('school').value = state.school;
-            document.getElementById('conf').value = state.conf;
-            document.getElementById('subdiv').value = state.subdiv;
-            document.getElementById('year').value = state.year;
+            ${!state.compare ? `
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${NAVY}">
+                    <h3 class="text-sm font-medium text-gray-600">Records</h3>
+                    <p class="text-2xl font-bold" style="color: ${NAVY}">${filtered.length}</p>
+                </div>
+                <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${ORANGE}">
+                    <h3 class="text-sm font-medium text-gray-600">Schools</h3>
+                    <p class="text-2xl font-bold" style="color: ${ORANGE}">${state.school === 'ALL' ? schools.length : 1}</p>
+                </div>
+                <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${NAVY}">
+                    <h3 class="text-sm font-medium text-gray-600">Years</h3>
+                    <p class="text-2xl font-bold" style="color: ${NAVY}">${years.length > 0 ? Math.min(...years) + '-' + Math.max(...years) : 'N/A'}</p>
+                </div>
+                <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${ORANGE}">
+                    <h3 class="text-sm font-medium text-gray-600">Avg CARE Ratio</h3>
+                    <p class="text-2xl font-bold" style="color: ${ORANGE}">${trend.length ? (trend.reduce((s, r) => s + r.avgRatio, 0) / trend.length).toFixed(1) + '%' : 'N/A'}</p>
+                </div>
+            </div>
             
-            // Add event listeners
-            document.getElementById('rolling').onchange = (e) => {
-                state.rolling = parseInt(e.target.value);
-                console.log('Rolling changed to:', state.rolling);
-                destroyCharts();
-                render();
-            };
-            document.getElementById('school').onchange = (e) => {
-                state.school = e.target.value;
-                console.log('School changed to:', state.school);
-                destroyCharts();
-                render();
-            };
-            document.getElementById('conf').onchange = (e) => {
-                state.conf = e.target.value;
-                console.log('Conference changed to:', state.conf);
-                destroyCharts();
-                render();
-            };
-            document.getElementById('subdiv').onchange = (e) => {
-                state.subdiv = e.target.value;
-                console.log('Subdivision changed to:', state.subdiv);
-                destroyCharts();
-                render();
-            };
-            document.getElementById('year').onchange = (e) => {
-                state.year = e.target.value;
-                console.log('Year changed to:', state.year);
-                render();
-            };
+            ${stats ? `
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h2 class="text-xl font-semibold mb-4">Financial Summary</h2>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="border-l-4 pl-4" style="border-color: ${NAVY}">
+                        <h3 class="text-sm font-medium text-gray-600 mb-1">Avg Student Aid</h3>
+                        <p class="text-xl font-bold" style="color: ${NAVY}">${fmt(stats.avgAid)}</p>
+                        <p class="text-xs text-gray-500 mt-1">Total: ${fmt(stats.totalAid)}</p>
+                    </div>
+                    <div class="border-l-4 pl-4" style="border-color: ${ORANGE}">
+                        <h3 class="text-sm font-medium text-gray-600 mb-1">Avg Meals</h3>
+                        <p class="text-xl font-bold" style="color: ${ORANGE}">${fmt(stats.avgMeals)}</p>
+                        <p class="text-xs text-gray-500 mt-1">Total: ${fmt(stats.totalMeals)}</p>
+                    </div>
+                    <div class="border-l-4 pl-4" style="border-color: ${NAVY}">
+                        <h3 class="text-sm font-medium text-gray-600 mb-1">Avg Medical</h3>
+                        <p class="text-xl font-bold" style="color: ${NAVY}">${fmt(stats.avgMedical)}</p>
+                        <p class="text-xs text-gray-500 mt-1">Total: ${fmt(stats.totalMedical)}</p>
+                    </div>
+                    <div class="border-l-4 pl-4" style="border-color: ${ORANGE}">
+                        <h3 class="text-sm font-medium text-gray-600 mb-1">Avg Shared Rev</h3>
+                        <p class="text-xl font-bold" style="color: ${ORANGE}">${fmt(stats.avgSharedRev)}</p>
+                        <p class="text-xs text-gray-500 mt-1">Total: ${fmt(stats.totalSharedRev)}</p>
+                    </div>
+                </div>
+            </div>
+            ` : ''}
+            ` : ''}
             
-            // Create charts after DOM is ready
-            destroyCharts();
-            setTimeout(() => {
-                createTrendChart();
-                createTopChart();
-            }, 100);
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold">Comparison</h2>
+                    <button id="compareBtn" class="px-4 py-2 rounded-md text-white font-medium" style="background-color: ${state.compare ? ORANGE : NAVY}">
+                        ${state.compare ? 'Disable' : 'Enable'}
+                    </button>
+                </div>
+                ${state.compare ? `
+                <div class="space-y-4">
+                    <select id="cType" class="w-full p-2 border rounded-md">
+                        <option value="institution">Institutions</option>
+                        <option value="conference">Conferences</option>
+                    </select>
+                    <div class="grid grid-cols-2 gap-4">
+                        <select id="c1" class="w-full p-2 border rounded-md">
+                            <option value="">Select 1</option>
+                            ${(state.cType === 'institution' ? schools : confs).map(i => `<option value="${i}">${i}</option>`).join('')}
+                        </select>
+                        <select id="c2" class="w-full p-2 border rounded-md">
+                            <option value="">Select 2</option>
+                            ${(state.cType === 'institution' ? schools : confs).map(i => `<option value="${i}">${i}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+            
+            ${state.compare && state.c1 && state.c2 && cData ? `
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h2 class="text-xl font-semibold mb-4">${state.c1} vs ${state.c2} (${rlbl})</h2>
+                <div style="height: 350px;"><canvas id="compareChart"></canvas></div>
+            </div>
+            
+            ${cStats ? `
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h2 class="text-xl font-semibold mb-4">Comparison Stats</h2>
+                <table class="min-w-full divide-y">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium uppercase">Metric</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium uppercase">${state.c1}</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium uppercase">${state.c2}</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y">
+                        <tr><td class="px-4 py-3 text-sm font-medium">Average</td><td class="px-4 py-3 text-sm text-right">${cStats.i1?.avg.toFixed(1)}%</td><td class="px-4 py-3 text-sm text-right">${cStats.i2?.avg.toFixed(1)}%</td></tr>
+                        <tr class="bg-gray-50"><td class="px-4 py-3 text-sm font-medium">Minimum</td><td class="px-4 py-3 text-sm text-right">${cStats.i1?.min.toFixed(1)}%</td><td class="px-4 py-3 text-sm text-right">${cStats.i2?.min.toFixed(1)}%</td></tr>
+                        <tr><td class="px-4 py-3 text-sm font-medium">Maximum</td><td class="px-4 py-3 text-sm text-right">${cStats.i1?.max.toFixed(1)}%</td><td class="px-4 py-3 text-sm text-right">${cStats.i2?.max.toFixed(1)}%</td></tr>
+                        <tr class="bg-gray-50"><td class="px-4 py-3 text-sm font-medium">Latest</td><td class="px-4 py-3 text-sm text-right">${cStats.i1?.latest.toFixed(1)}%</td><td class="px-4 py-3 text-sm text-right">${cStats.i2?.latest.toFixed(1)}%</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            ` : ''}
+            ` : ''}
+            
+            ${!state.compare ? `
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h2 class="text-xl font-semibold mb-4">CARE Ratio Trend (${rlbl})</h2>
+                <div style="height: 300px;"><canvas id="trendChart"></canvas></div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h2 class="text-xl font-semibold mb-4">Top 15 Schools (${rlbl})</h2>
+                <div style="height: 400px;"><canvas id="topChart"></canvas></div>
+            </div>
+            ` : ''}
+            
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-semibold mb-4">Data Table</h2>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium uppercase">Year</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium uppercase">School</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium uppercase">Conf</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium uppercase">Subdiv</th>
+                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">CARE Ratio</th>
+                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">Student Aid</th>
+                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">Meals</th>
+                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">Medical</th>
+                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">Shared Rev</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y">
+                            ${filtered.slice(0, 50).map(r => `
+                                <tr class="hover:bg-gray-50">
+                                    <td class="px-4 py-3 text-sm">${r.FY || 'N/A'}</td>
+                                    <td class="px-4 py-3 text-sm">${r.Institution || 'N/A'}</td>
+                                    <td class="px-4 py-3 text-sm">${r.Conference || 'N/A'}</td>
+                                    <td class="px-4 py-3 text-sm">${r['Division I Subdivision'] || 'N/A'}</td>
+                                    <td class="px-4 py-3 text-sm text-right font-semibold" style="color: ${NAVY}">${r['CARE Ratio'] != null ? r['CARE Ratio'].toFixed(1) + '%' : 'N/A'}</td>
+                                    <td class="px-4 py-3 text-sm text-right">${r['Athletic Student Aid'] != null ? fmt(r['Athletic Student Aid']) : 'N/A'}</td>
+                                    <td class="px-4 py-3 text-sm text-right">${r['Student-Athlete Meals'] != null ? fmt(r['Student-Athlete Meals']) : 'N/A'}</td>
+                                    <td class="px-4 py-3 text-sm text-right">${r['Medical Expenses'] != null ? fmt(r['Medical Expenses']) : 'N/A'}</td>
+                                    <td class="px-4 py-3 text-sm text-right">${r['Shared Athletics Revenue'] != null ? fmt(r['Shared Athletics Revenue']) : 'N/A'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    ${filtered.length > 50 ? `<p class="text-sm text-gray-500 mt-4">Showing 50 of ${filtered.length}</p>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('rolling').value = state.rolling;
+    document.getElementById('school').value = state.school;
+    document.getElementById('conf').value = state.conf;
+    document.getElementById('subdiv').value = state.subdiv;
+    document.getElementById('year').value = state.year;
+    
+    if (state.compare) {
+        document.getElementById('cType').value = state.cType;
+        document.getElementById('c1').value = state.c1;
+        document.getElementById('c2').value = state.c2;
+    }
+    
+    document.getElementById('rolling').onchange = e => { state.rolling = parseInt(e.target.value); destroyCharts(); render(); };
+    document.getElementById('school').onchange = e => { state.school = e.target.value; destroyCharts(); render(); };
+    document.getElementById('conf').onchange = e => { state.conf = e.target.value; destroyCharts(); render(); };
+    document.getElementById('subdiv').onchange = e => { state.subdiv = e.target.value; destroyCharts(); render(); };
+    document.getElementById('year').onchange = e => { state.year = e.target.value; render(); };
+    document.getElementById('compareBtn').onclick = () => { state.compare = !state.compare; if (!state.compare) { state.c1 = ''; state.c2 = ''; } destroyCharts(); render(); };
+    
+    if (state.compare) {
+        document.getElementById('cType').onchange = e => { state.cType = e.target.value; state.c1 = ''; state.c2 = ''; destroyCharts(); render(); };
+        document.getElementById('c1').onchange = e => { state.c1 = e.target.value; destroyCharts(); render(); };
+        document.getElementById('c2').onchange = e => { state.c2 = e.target.value; destroyCharts(); render(); };
+    }
+    
+    destroyCharts();
+    setTimeout(() => {
+        if (state.compare && state.c1 && state.c2 && cData) {
+            createCompChart(cData);
+        } else if (!state.compare) {
+            createTrendChart();
+            createTopChart();
         }
+    }, 100);
+}
     </script>
 </body>
 </html>
