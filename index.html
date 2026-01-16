@@ -33,8 +33,16 @@ fetch('CAREModel20052024_011625.xlsx')
     .then(buf => {
         const wb = XLSX.read(buf, { type: 'array' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        data = XLSX.utils.sheet_to_json(ws);
+        const rawData = XLSX.utils.sheet_to_json(ws);
+        
+        // Convert CARE Ratio from decimal to percentage (0.7 -> 70)
+        data = rawData.map(row => ({
+            ...row,
+            'CARE Ratio': row['CARE Ratio'] != null ? row['CARE Ratio'] * 100 : null
+        }));
+        
         console.log('Data loaded:', data.length, 'rows');
+        console.log('Sample CARE Ratio:', data[0]['CARE Ratio']);
         render();
     })
     .catch(err => {
@@ -81,19 +89,52 @@ function calcRolling(yrs) {
 function getTrend() {
     const rollAvgs = calcRolling(state.rolling);
     const yd = {};
+    
     Object.keys(rollAvgs).forEach(inst => {
         Object.keys(rollAvgs[inst]).forEach(yr => {
             const yearNum = parseInt(yr);
             const or = data.find(r => r.Institution === inst && r.FY === yearNum);
+            
             if (state.school !== 'ALL' && inst !== state.school) return;
             if (state.conf !== 'ALL' && or?.Conference !== state.conf) return;
             if (state.subdiv !== 'ALL' && or?.['Division I Subdivision'] !== state.subdiv) return;
-            if (!yd[yearNum]) yd[yearNum] = { sum: 0, count: 0, year: yearNum };
+            
+            // If a specific year is selected, only include that year
+            // (which represents the rolling average ending in that year)
+            if (state.year !== 'ALL' && yearNum !== parseInt(state.year)) return;
+            
+            if (!yd[yearNum]) {
+                yd[yearNum] = { sum: 0, count: 0, year: yearNum };
+            }
             yd[yearNum].sum += rollAvgs[inst][yr];
             yd[yearNum].count++;
         });
     });
-    return Object.values(yd).map(i => ({ year: i.year, avgRatio: i.sum / i.count })).sort((a, b) => a.year - b.year);
+    
+    const result = Object.values(yd).map(i => ({ year: i.year, avgRatio: i.sum / i.count })).sort((a, b) => a.year - b.year);
+    
+    // If a specific year is selected with rolling average > 1, show the component years
+    if (state.year !== 'ALL' && state.rolling > 1) {
+        const selectedYear = parseInt(state.year);
+        const avgValue = result.find(r => r.year === selectedYear)?.avgRatio || 0;
+        const componentYears = [];
+        
+        for (let i = state.rolling - 1; i >= 0; i--) {
+            componentYears.push({
+                year: selectedYear - i,
+                avgRatio: avgValue
+            });
+        }
+        
+        return componentYears;
+    }
+    
+    // If specific year with 1-year average, return empty (will hide chart)
+    if (state.year !== 'ALL' && state.rolling === 1) {
+        return [];
+    }
+    
+    return result;
 }
 
 function getTop() {
@@ -178,6 +219,13 @@ function destroyCharts() {
 function createTrendChart() {
     const trend = getTrend();
     const ctx = document.getElementById('trendChart');
+    
+    // If specific year with 1-year average, hide chart with message
+    if (state.year !== 'ALL' && state.rolling === 1) {
+        if (ctx) ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">Chart hidden for single year selection. See data table below for the specific value.</p>';
+        return;
+    }
+    
     if (!ctx || trend.length === 0) {
         if (ctx) ctx.parentElement.innerHTML = '<p class="text-center text-gray-500 py-8">No data</p>';
         return;
