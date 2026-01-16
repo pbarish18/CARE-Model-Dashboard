@@ -4,11 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>C.A.R.E. Model Dashboard</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.10.3/Recharts.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.5.0/dist/Recharts.js"></script>
+    <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body>
@@ -29,20 +30,28 @@ const Dashboard = () => {
   const [c1, setC1] = useState('');
   const [c2, setC2] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const NAVY = '#001f3f';
   const ORANGE = '#f76900';
 
   useEffect(() => {
     fetch('CAREModel20052024_011625.xlsx')
-      .then(r => r.arrayBuffer())
+      .then(r => {
+        if (!r.ok) throw new Error('File not found');
+        return r.arrayBuffer();
+      })
       .then(buf => {
         const wb = XLSX.read(buf, { type: 'array' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        setData(XLSX.utils.sheet_to_json(ws));
+        const jsonData = XLSX.utils.sheet_to_json(ws);
+        setData(jsonData);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
   }, []);
 
   const schools = useMemo(() => [...new Set(data.map(r => r.Institution).filter(Boolean))].sort(), [data]);
@@ -142,6 +151,7 @@ const Dashboard = () => {
   const rlbl = rolling === 1 ? '1-Year' : rolling === 20 ? 'Full Period' : `${rolling}-Year Rolling`;
 
   if (loading) return <div className="flex items-center justify-center h-screen"><div className="text-2xl font-bold">Loading...</div></div>;
+  if (error) return <div className="flex items-center justify-center h-screen"><div className="text-center"><div className="text-2xl font-bold text-red-600 mb-2">Error</div><div>{error}</div><div className="text-sm mt-2">Make sure CAREModel20052024_011625.xlsx is in your repository</div></div></div>;
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
