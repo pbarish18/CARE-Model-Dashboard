@@ -31,14 +31,31 @@
             .then(buf => {
                 const wb = XLSX.read(buf, { type: 'array' });
                 const ws = wb.Sheets[wb.SheetNames[0]];
-                data = XLSX.utils.sheet_to_json(ws);
-                console.log('Data loaded:', data.length, 'rows');
-                console.log('Sample row:', data[0]);
-                console.log('Column names:', Object.keys(data[0]));
+                const rawData = XLSX.utils.sheet_to_json(ws);
                 
-                // Check for C.A.R.E. Model Ratio column
-                const sampleRatio = data[0]['C.A.R.E. Model Ratio'];
-                console.log('Sample C.A.R.E. ratio:', sampleRatio, typeof sampleRatio);
+                // Calculate C.A.R.E. Model Ratio for each row
+                data = rawData.map(row => {
+                    const aid = row['Athletic Student Aid'] || 0;
+                    const meals = row['Student-Athlete Meals'] || 0;
+                    const medical = row['Medical Expenses'] || 0;
+                    const sharedRev = row['Shared Athletics Revenue'] || 0;
+                    
+                    // Calculate ratio only if shared revenue is positive
+                    const careRatio = sharedRev > 0 ? (aid + meals + medical) / sharedRev : null;
+                    
+                    return {
+                        ...row,
+                        'C.A.R.E. Model Ratio': careRatio
+                    };
+                });
+                
+                console.log('Data loaded:', data.length, 'rows');
+                console.log('Sample row with calculated ratio:', data[0]);
+                console.log('Sample C.A.R.E. ratio:', data[0]['C.A.R.E. Model Ratio']);
+                console.log('Sample calculation: (Aid:', data[0]['Athletic Student Aid'], 
+                    '+ Meals:', data[0]['Student-Athlete Meals'],
+                    '+ Medical:', data[0]['Medical Expenses'], 
+                    ') / Shared Rev:', data[0]['Shared Athletics Revenue']);
                 
                 render();
             })
