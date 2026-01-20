@@ -312,7 +312,8 @@ function render() {
             <div class="rounded-lg shadow-lg p-6 mb-6" style="background-color: ${NAVY}; color: white;">
                 <h1 class="text-3xl font-bold mb-2">C.A.R.E. Model Dashboard</h1>
                 <p class="mb-4 opacity-90">Knight Commission - FY 2005-2024</p>
-                <p class="text-sm opacity-80">CARE Ratio = (Student Aid + Meals + Medical) ÷ Shared Revenue × 100%</p>
+                <p class="text-sm opacity-80 mb-3">CARE Ratio = (Student Aid + Meals + Medical) ÷ Shared Revenue × 100%</p>
+                <p class="text-xs opacity-75 leading-relaxed">The C.A.R.E. Ratio is modeled on the Knight Commission on Intercollegiate Athletics' Connecting Athletics Revenue to the Educational (C.A.R.E.) Model report published in 2020. The benchmark ratio for each institution is an amount equal to at least 50 percent of "shared athletics revenue distributions" must support athlete education, health, safety, and well-being, and university academics.</p>
             </div>
             
             <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
@@ -389,21 +390,25 @@ function render() {
                         <h3 class="text-sm font-medium text-gray-600 mb-1">Avg Student Aid</h3>
                         <p class="text-xl font-bold" style="color: ${NAVY}">${fmt(stats.avgAid)}</p>
                         <p class="text-xs text-gray-500 mt-1">Total: ${fmt(stats.totalAid)}</p>
+                        <p class="text-xs text-gray-600 mt-2 leading-relaxed">Total expenses for athletic student aid, including tuition and fees, room and board, books, summer school, tuition discounts, waivers, and cost of attendance, including aid given to student-athletes who have exhausted their eligibility or who are inactive due to medical reasons.</p>
                     </div>
                     <div class="border-l-4 pl-4" style="border-color: ${ORANGE}">
                         <h3 class="text-sm font-medium text-gray-600 mb-1">Avg Meals</h3>
                         <p class="text-xl font-bold" style="color: ${ORANGE}">${fmt(stats.avgMeals)}</p>
                         <p class="text-xs text-gray-500 mt-1">Total: ${fmt(stats.totalMeals)}</p>
+                        <p class="text-xs text-gray-600 mt-2 leading-relaxed">Meal allowance and food/snacks provided to student-athletes outside of competition travel.</p>
                     </div>
                     <div class="border-l-4 pl-4" style="border-color: ${NAVY}">
                         <h3 class="text-sm font-medium text-gray-600 mb-1">Avg Medical</h3>
                         <p class="text-xl font-bold" style="color: ${NAVY}">${fmt(stats.avgMedical)}</p>
                         <p class="text-xs text-gray-500 mt-1">Total: ${fmt(stats.totalMedical)}</p>
+                        <p class="text-xs text-gray-600 mt-2 leading-relaxed">Expenses paid by the institution(s) for student-athletes' medical expenses and medical insurance premiums.</p>
                     </div>
                     <div class="border-l-4 pl-4" style="border-color: ${ORANGE}">
                         <h3 class="text-sm font-medium text-gray-600 mb-1">Avg Shared Rev</h3>
                         <p class="text-xl font-bold" style="color: ${ORANGE}">${fmt(stats.avgSharedRev)}</p>
                         <p class="text-xs text-gray-500 mt-1">Total: ${fmt(stats.totalSharedRev)}</p>
+                        <p class="text-xs text-gray-600 mt-2 leading-relaxed">Revenues that are received from the NCAA and/or CFP (either directly, or indirectly via their conference) as well as conference-generated revenues from media contracts and conference tournaments.</p>
                     </div>
                 </div>
             </div>
