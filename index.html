@@ -28,7 +28,9 @@ let state = {
     c2: '',
     tablePage: 1,
     tableSearch: '',
-    tablePerPage: 50
+    tablePerPage: 50,
+    sortColumn: null,
+    sortDirection: 'asc'
 };
 
 fetch('CAREModel20052024_011625.xlsx')
@@ -197,6 +199,69 @@ function fmt(num) {
     return '$' + num.toFixed(2);
 }
 
+function downloadExcel() {
+    const filtered = getFiltered();
+    const searchFiltered = state.tableSearch 
+        ? filtered.filter(r => 
+            (r.Institution || '').toLowerCase().includes(state.tableSearch.toLowerCase()) ||
+            (r.Conference || '').toLowerCase().includes(state.tableSearch.toLowerCase()) ||
+            (r['Division I Subdivision'] || '').toLowerCase().includes(state.tableSearch.toLowerCase()) ||
+            (r.FY || '').toString().includes(state.tableSearch)
+          )
+        : filtered;
+    
+    // Apply same sorting as table
+    let sortedData = [...searchFiltered];
+    if (state.sortColumn) {
+        sortedData.sort((a, b) => {
+            let valA = a[state.sortColumn];
+            let valB = b[state.sortColumn];
+            
+            if (valA == null) valA = '';
+            if (valB == null) valB = '';
+            
+            if (typeof valA === 'number' && typeof valB === 'number') {
+                return state.sortDirection === 'asc' ? valA - valB : valB - valA;
+            }
+            
+            const strA = String(valA).toLowerCase();
+            const strB = String(valB).toLowerCase();
+            if (state.sortDirection === 'asc') {
+                return strA < strB ? -1 : strA > strB ? 1 : 0;
+            } else {
+                return strA > strB ? -1 : strA < strB ? 1 : 0;
+            }
+        });
+    }
+    
+    // Prepare data for Excel
+    const excelData = sortedData.map(r => ({
+        'Year': r.FY,
+        'Institution': r.Institution,
+        'Conference': r.Conference,
+        'Division I Subdivision': r['Division I Subdivision'],
+        'CARE Ratio (%)': r['CARE Ratio'] != null ? r['CARE Ratio'].toFixed(1) : '',
+        'Athletic Student Aid': r['Athletic Student Aid'],
+        'Student-Athlete Meals': r['Student-Athlete Meals'],
+        'Medical Expenses': r['Medical Expenses'],
+        'Shared Athletics Revenue': r['Shared Athletics Revenue']
+    }));
+    
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(excelData);
+    
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'CARE Model Data');
+    
+    // Generate filename with current date
+    const date = new Date().toISOString().split('T')[0];
+    const filename = `CARE_Model_Data_${date}.xlsx`;
+    
+    // Download
+    XLSX.writeFile(wb, filename);
+}
+
 function destroyCharts() {
     Object.values(charts).forEach(c => c?.destroy?.());
     charts = {};
@@ -214,10 +279,37 @@ function updateTable() {
           )
         : filtered;
     
-    const totalPages = Math.ceil(searchFiltered.length / state.tablePerPage);
+    // Apply sorting
+    let sortedData = [...searchFiltered];
+    if (state.sortColumn) {
+        sortedData.sort((a, b) => {
+            let valA = a[state.sortColumn];
+            let valB = b[state.sortColumn];
+            
+            // Handle null/undefined
+            if (valA == null) valA = '';
+            if (valB == null) valB = '';
+            
+            // Numeric comparison for numbers
+            if (typeof valA === 'number' && typeof valB === 'number') {
+                return state.sortDirection === 'asc' ? valA - valB : valB - valA;
+            }
+            
+            // String comparison
+            const strA = String(valA).toLowerCase();
+            const strB = String(valB).toLowerCase();
+            if (state.sortDirection === 'asc') {
+                return strA < strB ? -1 : strA > strB ? 1 : 0;
+            } else {
+                return strA > strB ? -1 : strA < strB ? 1 : 0;
+            }
+        });
+    }
+    
+    const totalPages = Math.ceil(sortedData.length / state.tablePerPage);
     const startIdx = (state.tablePage - 1) * state.tablePerPage;
     const endIdx = startIdx + state.tablePerPage;
-    const paginatedData = searchFiltered.slice(startIdx, endIdx);
+    const paginatedData = sortedData.slice(startIdx, endIdx);
     
     // Update table body
     const tbody = document.querySelector('#dataTable tbody');
@@ -237,10 +329,26 @@ function updateTable() {
         `).join('');
     }
     
+    // Update sort indicators
+    const headers = document.querySelectorAll('.sortable-header');
+    headers.forEach(header => {
+        const column = header.dataset.column;
+        const arrow = header.querySelector('.sort-arrow');
+        if (arrow) {
+            if (state.sortColumn === column) {
+                arrow.textContent = state.sortDirection === 'asc' ? ' ↑' : ' ↓';
+                arrow.style.opacity = '1';
+            } else {
+                arrow.textContent = ' ↕';
+                arrow.style.opacity = '0.3';
+            }
+        }
+    });
+    
     // Update record counter
     const counter = document.getElementById('tableCounter');
     if (counter) {
-        counter.textContent = `Showing ${startIdx + 1}-${Math.min(endIdx, searchFiltered.length)} of ${searchFiltered.length} records`;
+        counter.textContent = `Showing ${startIdx + 1}-${Math.min(endIdx, sortedData.length)} of ${sortedData.length} records`;
     }
     
     // Update pagination
@@ -606,7 +714,12 @@ function render() {
             ` : ''}
             
             <div class="bg-white rounded-lg shadow-lg p-6">
-                <h2 class="text-xl font-semibold mb-4">Data Table</h2>
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold">Data Table</h2>
+                    <button id="downloadBtn" class="px-4 py-2 rounded-md text-white font-medium" style="background-color: ${NAVY}">
+                        Download to Excel
+                    </button>
+                </div>
                 
                 <div class="mb-4 flex items-center justify-between gap-4">
                     <div class="flex-1">
@@ -626,78 +739,42 @@ function render() {
                     <table id="dataTable" class="min-w-full divide-y">
                         <thead class="bg-gray-50">
                             <tr>
-                                <th class="px-4 py-3 text-left text-xs font-medium uppercase">Year</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium uppercase">School</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium uppercase">Conf</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium uppercase">Subdiv</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">CARE Ratio</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">Student Aid</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">Meals</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">Medical</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium uppercase">Shared Rev</th>
+                                <th class="sortable-header px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="FY">
+                                    Year<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
+                                <th class="sortable-header px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="Institution">
+                                    School<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
+                                <th class="sortable-header px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="Conference">
+                                    Conf<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
+                                <th class="sortable-header px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="Division I Subdivision">
+                                    Subdiv<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
+                                <th class="sortable-header px-4 py-3 text-right text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="CARE Ratio">
+                                    CARE Ratio<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
+                                <th class="sortable-header px-4 py-3 text-right text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="Athletic Student Aid">
+                                    Student Aid<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
+                                <th class="sortable-header px-4 py-3 text-right text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="Student-Athlete Meals">
+                                    Meals<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
+                                <th class="sortable-header px-4 py-3 text-right text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="Medical Expenses">
+                                    Medical<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
+                                <th class="sortable-header px-4 py-3 text-right text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="Shared Athletics Revenue">
+                                    Shared Rev<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
                             </tr>
                         </thead>
                         <tbody class="divide-y">
-                            ${paginatedData.map(r => `
-                                <tr class="hover:bg-gray-50">
-                                    <td class="px-4 py-3 text-sm">${r.FY || 'N/A'}</td>
-                                    <td class="px-4 py-3 text-sm">${r.Institution || 'N/A'}</td>
-                                    <td class="px-4 py-3 text-sm">${r.Conference || 'N/A'}</td>
-                                    <td class="px-4 py-3 text-sm">${r['Division I Subdivision'] || 'N/A'}</td>
-                                    <td class="px-4 py-3 text-sm text-right font-semibold" style="color: ${NAVY}">${r['CARE Ratio'] != null ? r['CARE Ratio'].toFixed(1) + '%' : 'N/A'}</td>
-                                    <td class="px-4 py-3 text-sm text-right">${r['Athletic Student Aid'] != null ? fmt(r['Athletic Student Aid']) : 'N/A'}</td>
-                                    <td class="px-4 py-3 text-sm text-right">${r['Student-Athlete Meals'] != null ? fmt(r['Student-Athlete Meals']) : 'N/A'}</td>
-                                    <td class="px-4 py-3 text-sm text-right">${r['Medical Expenses'] != null ? fmt(r['Medical Expenses']) : 'N/A'}</td>
-                                    <td class="px-4 py-3 text-sm text-right">${r['Shared Athletics Revenue'] != null ? fmt(r['Shared Athletics Revenue']) : 'N/A'}</td>
-                                </tr>
-                            `).join('')}
                         </tbody>
                     </table>
                 </div>
                 
-                ${totalPages > 1 ? `
                 <div id="tablePagination" class="mt-4 flex items-center justify-between">
-                    <button 
-                        id="prevPage" 
-                        class="px-4 py-2 border rounded-md ${state.tablePage === 1 ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-50'}"
-                        ${state.tablePage === 1 ? 'disabled' : ''}
-                    >
-                        Previous
-                    </button>
-                    
-                    <div class="flex gap-2">
-                        ${Array.from({length: Math.min(totalPages, 7)}, (_, i) => {
-                            let pageNum;
-                            if (totalPages <= 7) {
-                                pageNum = i + 1;
-                            } else if (state.tablePage <= 4) {
-                                pageNum = i + 1;
-                            } else if (state.tablePage >= totalPages - 3) {
-                                pageNum = totalPages - 6 + i;
-                            } else {
-                                pageNum = state.tablePage - 3 + i;
-                            }
-                            return `
-                                <button 
-                                    class="px-3 py-1 border rounded ${pageNum === state.tablePage ? 'text-white' : 'text-gray-700 hover:bg-gray-50'}"
-                                    style="${pageNum === state.tablePage ? `background-color: ${NAVY}; border-color: ${NAVY}` : ''}"
-                                    onclick="state.tablePage = ${pageNum}; render();"
-                                >
-                                    ${pageNum}
-                                </button>
-                            `;
-                        }).join('')}
-                    </div>
-                    
-                    <button 
-                        id="nextPage" 
-                        class="px-4 py-2 border rounded-md ${state.tablePage === totalPages ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-50'}"
-                        ${state.tablePage === totalPages ? 'disabled' : ''}
-                    >
-                        Next
-                    </button>
                 </div>
-                ` : ''}
             </div>
         </div>
     `;
@@ -720,8 +797,9 @@ function render() {
     document.getElementById('subdiv').onchange = e => { state.subdiv = e.target.value; destroyCharts(); render(); };
     document.getElementById('year').onchange = e => { state.year = e.target.value; render(); };
     document.getElementById('compareBtn').onclick = () => { state.compare = !state.compare; if (!state.compare) { state.c1 = ''; state.c2 = ''; } destroyCharts(); render(); };
+    document.getElementById('downloadBtn').onclick = downloadExcel;
     
-    // Table search and pagination
+    // Table search
     const searchInput = document.getElementById('tableSearch');
     searchInput.value = state.tableSearch;
     searchInput.oninput = e => { 
@@ -730,7 +808,21 @@ function render() {
         updateTable();
     };
     
-    // Initial table pagination setup
+    // Sortable columns
+    document.querySelectorAll('.sortable-header').forEach(header => {
+        header.onclick = () => {
+            const column = header.dataset.column;
+            if (state.sortColumn === column) {
+                state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                state.sortColumn = column;
+                state.sortDirection = 'asc';
+            }
+            updateTable();
+        };
+    });
+    
+    // Initial table update
     updateTable();
     
     if (state.compare) {
