@@ -618,7 +618,15 @@ function render() {
     document.getElementById('compareBtn').onclick = () => { state.compare = !state.compare; if (!state.compare) { state.c1 = ''; state.c2 = ''; } destroyCharts(); render(); };
     
     // Table search and pagination
-    document.getElementById('tableSearch').oninput = e => { state.tableSearch = e.target.value; state.tablePage = 1; render(); };
+    const searchInput = document.getElementById('tableSearch');
+    searchInput.oninput = e => { 
+        state.tableSearch = e.target.value; 
+        state.tablePage = 1; 
+        const scrollPos = window.scrollY;
+        render(); 
+        window.scrollTo(0, scrollPos);
+        setTimeout(() => document.getElementById('tableSearch').focus(), 0);
+    };
     const prevBtn = document.getElementById('prevPage');
     const nextBtn = document.getElementById('nextPage');
     if (prevBtn) prevBtn.onclick = () => { if (state.tablePage > 1) { state.tablePage--; render(); } };
