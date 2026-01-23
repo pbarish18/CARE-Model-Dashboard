@@ -128,15 +128,40 @@ function getTrend() {
 function getTop() {
     const rollAvgs = calcRolling(state.rolling);
     const sa = {};
+    
     Object.keys(rollAvgs).forEach(inst => {
-        const rats = Object.values(rollAvgs[inst]);
         const ors = data.filter(r => r.Institution === inst);
         if (state.conf !== 'ALL' && !ors.some(r => r.Conference === state.conf)) return;
         if (state.subdiv !== 'ALL' && !ors.some(r => r['Division I Subdivision'] === state.subdiv)) return;
+        
+        let targetYears = [];
+        
+        // Determine which years to include based on year filter
+        if (state.year === 'ALL') {
+            // Use all available years for this institution
+            targetYears = Object.keys(rollAvgs[inst]).map(y => parseInt(y));
+        } else if (state.rolling === 1) {
+            // Single year selected
+            targetYears = [parseInt(state.year)];
+        } else {
+            // Rolling average with specific year - include years in the window
+            const selectedYear = parseInt(state.year);
+            for (let i = 0; i < state.rolling; i++) {
+                const yr = selectedYear - i;
+                if (rollAvgs[inst][yr] != null) {
+                    targetYears.push(yr);
+                }
+            }
+        }
+        
+        // Get the ratios for the target years
+        const rats = targetYears.map(yr => rollAvgs[inst][yr]).filter(r => r != null);
+        
         if (rats.length > 0) {
             sa[inst] = { school: inst, avgRatio: rats.reduce((a, b) => a + b, 0) / rats.length };
         }
     });
+    
     return Object.values(sa).sort((a, b) => b.avgRatio - a.avgRatio).slice(0, 15);
 }
 
