@@ -61,12 +61,29 @@ fetch('CAREModel20052024_011625.xlsx')
     });
 
 function getFiltered() {
-    return data.filter(r => 
-        (state.school === 'ALL' || r.Institution === state.school) &&
-        (state.year === 'ALL' || String(r.FY) === String(state.year)) &&
-        (state.conf === 'ALL' || r.Conference === state.conf) &&
-        (state.subdiv === 'ALL' || r['Division I Subdivision'] === state.subdiv)
-    );
+    return data.filter(r => {
+        // School filter
+        if (state.school !== 'ALL' && r.Institution !== state.school) return false;
+        
+        // Conference filter
+        if (state.conf !== 'ALL' && r.Conference !== state.conf) return false;
+        
+        // Subdivision filter
+        if (state.subdiv !== 'ALL' && r['Division I Subdivision'] !== state.subdiv) return false;
+        
+        // Year filter - handle rolling average
+        if (state.year === 'ALL') {
+            return true;
+        } else if (state.rolling === 1) {
+            // Single year
+            return String(r.FY) === String(state.year);
+        } else {
+            // Rolling average - include all years in the window
+            const selectedYear = parseInt(state.year);
+            const startYear = selectedYear - state.rolling + 1;
+            return r.FY >= startYear && r.FY <= selectedYear;
+        }
+    });
 }
 
 function calcRolling(yrs) {
