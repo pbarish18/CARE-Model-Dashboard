@@ -192,6 +192,42 @@ function getSummary() {
     return { avgAid: sum.aid / n, avgMeals: sum.meals / n, avgMedical: sum.medical / n, avgSharedRev: sum.sharedRev / n, avgCareRatio: sum.careRatio / n, totalAid: sum.aid, totalMeals: sum.meals, totalMedical: sum.medical, totalSharedRev: sum.sharedRev };
 }
 
+function getAmountNeeded() {
+    // Only calculate if a single institution is selected
+    if (state.school === 'ALL') return null;
+    
+    const schoolData = data.filter(r => r.Institution === state.school);
+    if (schoolData.length === 0) return null;
+    
+    let targetYears = [];
+    
+    if (state.year === 'ALL') {
+        // Get most recent year
+        const maxYear = Math.max(...schoolData.map(r => r.FY));
+        targetYears = [maxYear];
+    } else if (state.rolling === 1) {
+        // Single year selected
+        targetYears = [parseInt(state.year)];
+    } else {
+        // Rolling average - get the years in the window
+        const selectedYear = parseInt(state.year);
+        for (let i = 0; i < state.rolling; i++) {
+            targetYears.push(selectedYear - i);
+        }
+    }
+    
+    // Get the amount needed for each year
+    const amounts = targetYears.map(yr => {
+        const record = schoolData.find(r => r.FY === yr);
+        return record && record['Amount Needed to Reach 50%'] != null ? record['Amount Needed to Reach 50%'] : 0;
+    }).filter(a => a != null);
+    
+    if (amounts.length === 0) return null;
+    
+    // Return average
+    return amounts.reduce((a, b) => a + b, 0) / amounts.length;
+}
+
 function fmt(num) {
     if (num >= 1e9) return '$' + (num / 1e9).toFixed(2) + 'B';
     if (num >= 1e6) return '$' + (num / 1e6).toFixed(2) + 'M';
@@ -244,7 +280,8 @@ function downloadExcel() {
         'Athletic Student Aid': r['Athletic Student Aid'],
         'Student-Athlete Meals': r['Student-Athlete Meals'],
         'Medical Expenses': r['Medical Expenses'],
-        'Shared Athletics Revenue': r['Shared Athletics Revenue']
+        'Shared Athletics Revenue': r['Shared Athletics Revenue'],
+        'Amount Needed to Reach 50%': r['Amount Needed to Reach 50%']
     }));
     
     // Create workbook and worksheet
@@ -325,6 +362,7 @@ function updateTable() {
                 <td class="px-4 py-3 text-sm text-right">${r['Student-Athlete Meals'] != null ? fmt(r['Student-Athlete Meals']) : 'N/A'}</td>
                 <td class="px-4 py-3 text-sm text-right">${r['Medical Expenses'] != null ? fmt(r['Medical Expenses']) : 'N/A'}</td>
                 <td class="px-4 py-3 text-sm text-right">${r['Shared Athletics Revenue'] != null ? fmt(r['Shared Athletics Revenue']) : 'N/A'}</td>
+                <td class="px-4 py-3 text-sm text-right">${r['Amount Needed to Reach 50%'] != null ? fmt(r['Amount Needed to Reach 50%']) : 'N/A'}</td>
             </tr>
         `).join('');
     }
@@ -498,6 +536,7 @@ function render() {
     const rlbl = state.rolling === 1 ? '1-Year' : state.rolling === 20 ? 'Full Period' : `${state.rolling}-Year Rolling`;
     const cData = getCompData();
     const cStats = getCompStats(cData);
+    const amountNeeded = getAmountNeeded();
     
     // Table search and pagination
     const searchFiltered = state.tableSearch 
@@ -537,6 +576,10 @@ function render() {
         // All years
         avgCareRatioValue = trend.length ? (trend.reduce((s, r) => s + r.avgRatio, 0) / trend.length).toFixed(1) + '%' : 'N/A';
     }
+    
+    // Determine number of summary boxes (4 or 5 depending on if single institution selected)
+    const summaryBoxCount = state.school !== 'ALL' && amountNeeded != null ? 5 : 4;
+    const summaryGridClass = summaryBoxCount === 5 ? 'grid-cols-5' : 'grid-cols-2 md:grid-cols-4';
     
     document.getElementById('root').innerHTML = `
         <div class="max-w-7xl mx-auto">
@@ -594,7 +637,7 @@ function render() {
             </div>
             
             ${!state.compare ? `
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="grid ${summaryGridClass} gap-4 mb-6">
                 <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${NAVY}">
                     <h3 class="text-sm font-medium text-gray-600">Records</h3>
                     <p class="text-2xl font-bold" style="color: ${NAVY}">${filtered.length}</p>
@@ -611,6 +654,12 @@ function render() {
                     <h3 class="text-sm font-medium text-gray-600">${avgCareRatioLabel}</h3>
                     <p class="text-2xl font-bold" style="color: ${ORANGE}">${avgCareRatioValue}</p>
                 </div>
+                ${state.school !== 'ALL' && amountNeeded != null ? `
+                <div class="bg-white rounded-lg shadow p-4" style="border-top: 4px solid ${NAVY}">
+                    <h3 class="text-sm font-medium text-gray-600">Amount Needed to Reach 50%</h3>
+                    <p class="text-2xl font-bold" style="color: ${NAVY}">${fmt(amountNeeded)}</p>
+                </div>
+                ` : ''}
             </div>
             
             ${stats ? `
@@ -765,6 +814,9 @@ function render() {
                                 </th>
                                 <th class="sortable-header px-4 py-3 text-right text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="Shared Athletics Revenue">
                                     Shared Rev<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
+                                </th>
+                                <th class="sortable-header px-4 py-3 text-right text-xs font-medium uppercase cursor-pointer hover:bg-gray-100" data-column="Amount Needed to Reach 50%">
+                                    Amt Needed<span class="sort-arrow" style="opacity: 0.3"> ↕</span>
                                 </th>
                             </tr>
                         </thead>
